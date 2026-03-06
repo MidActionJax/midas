@@ -12,6 +12,13 @@ class StateManager:
         self.active_positions = []
         self.realized_pnl = 0.0
         self.trade_history = []
+        self.price_history = []
+        self.daily_drawdown_limit = -500.0
+
+    @property
+    def is_kill_switch_active(self):
+        with self._lock:
+            return self.realized_pnl <= self.daily_drawdown_limit
 
     def set_market_data(self, symbol, data):
         with self._lock:
@@ -50,6 +57,11 @@ class StateManager:
     def add_pnl(self, amount):
         with self._lock:
             self.realized_pnl += amount
+            if self.is_kill_switch_active:
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print("!!! WARNING: DAILY DRAWDOWN LIMIT HIT - KILL SWITCH ACTIVE !!!")
+                print(f"!!! REALIZED PNL: {self.realized_pnl:.2f} / {self.daily_drawdown_limit:.2f} !!!")
+                print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
     def get_realized_pnl(self):
         with self._lock:
@@ -58,6 +70,11 @@ class StateManager:
     def add_trade_to_history(self, trade):
         with self._lock:
             self.trade_history.append(trade)
+
+    def add_price(self, price):
+        with self._lock:
+            self.price_history.append(price)
+            self.price_history = self.price_history[-200:]
 
 # Instantiate the global state manager
 state_manager = StateManager()

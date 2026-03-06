@@ -13,11 +13,19 @@
 </head>
 <body>
     <div class="container mt-5">
+        <div id="kill-switch-alert" class="alert alert-danger text-center" role="alert" style="display: none;">
+            <strong>CRITICAL: DAILY DRAWDOWN LIMIT REACHED. TRADING SUSPENDED.</strong>
+        </div>
+
         <h1 class="text-center text-warning">Project Midas</h1>
         <p class="text-center text-muted">Order Flow "Grey Box" System</p>
 
-        <div class="d-flex justify-content-center my-4">
-            <a href="/start_bot" class="btn btn-success me-2">Start Engine</a>
+        <div class="d-flex justify-content-center align-items-center my-4 gap-2">
+            <select id="mode-selector" class="form-select bg-dark text-light border-secondary w-auto">
+                <option value="PAPER_CRYPTO">Paper: Crypto (BTC)</option>
+                <option value="PAPER_FUTURES">Paper: Futures (S&P 500)</option>
+            </select>
+            <a href="/start_bot" id="start-button" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
 
@@ -83,6 +91,17 @@
                     const asksTable = document.getElementById('asks-table');
                     const queueDiv = document.getElementById('approval-queue-section');
                     const cardsDiv = document.getElementById('approval-queue-cards');
+                    const startButton = document.getElementById('start-button');
+                    const killSwitchAlert = document.getElementById('kill-switch-alert');
+
+                    // 0. Handle Kill Switch
+                    if (data.kill_switch_active) {
+                        killSwitchAlert.style.display = 'block';
+                        startButton.classList.add('disabled');
+                        startButton.classList.remove('btn-success');
+                        startButton.classList.add('btn-secondary');
+                        startButton.textContent = 'LOCKED';
+                    }
 
                     // 1. Basic Status
                     document.getElementById('symbol').textContent = data.symbol;
@@ -92,7 +111,8 @@
                     }
                     
                     led.textContent = 'ONLINE'; led.className = 'badge bg-success';
-                    priceEl.textContent = data.price + ' USDT';
+                    const unit = (data.symbol === 'ES') ? ' USD' : ' USDT';
+                    priceEl.textContent = data.price + unit;
                     
                     // 2. Balance & PnL
                     if (data.balance !== undefined && data.balance !== "N/A") {
@@ -156,6 +176,23 @@
         // Run every 1 second
         setInterval(updateStatus, 1000);
         document.addEventListener('DOMContentLoaded', updateStatus);
+
+        // Restoration: Mode Switcher Listener
+        document.getElementById('mode-selector').addEventListener('change', function(e) {
+            const selectedMode = e.target.value;
+            fetch('/switch_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: selectedMode })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert("Mode Switched to " + selectedMode + "!\n\nPlease STOP and START the engine to apply changes.");
+                }
+            })
+            .catch(error => console.error("Error switching modes:", error));
+        });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>

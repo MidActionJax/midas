@@ -40,7 +40,8 @@ def status():
         'market_depth': None,
         'pending_signals': [],
         'realized_pnl': state.state_manager.get_realized_pnl(),
-        'open_positions': len(state.state_manager.get_active_positions())
+        'open_positions': len(state.state_manager.get_active_positions()),
+        'kill_switch_active': state.state_manager.is_kill_switch_active
     }
     
     # Check if the engine thread exists and is running
@@ -73,6 +74,21 @@ def status():
 
     return jsonify(status_data)
 
+@app.route('/switch_mode', methods=['POST'])
+def switch_mode():
+    data = request.get_json()
+    new_mode = data.get('mode')
+    
+    if new_mode == 'PAPER_FUTURES':
+        config.TRADING_MODE = 'PAPER_FUTURES'
+        config.TRADING_SYMBOL = 'ES'
+    else:
+        config.TRADING_MODE = 'PAPER_CRYPTO'
+        config.TRADING_SYMBOL = 'BTC/USDT'
+        
+    print(f"!!! SYSTEM MODE SWITCHED TO: {config.TRADING_MODE} ({config.TRADING_SYMBOL}) !!!")
+    return jsonify({'status': 'success', 'mode': config.TRADING_MODE, 'symbol': config.TRADING_SYMBOL})
+
 @app.route('/approve_signal/<float:signal_id>', methods=['POST'])
 def approve_signal(signal_id):
     if not core.engine.engine_thread or not core.engine.engine_thread.is_alive() or not core.engine.engine_thread.adapter:
@@ -91,30 +107,32 @@ def approve_signal(signal_id):
         adapter = core.engine.engine_thread.adapter
         trade_executed = False
         if signal_to_execute['type'] == 'BUY_SIGNAL':
-            fixed_size = 0.1 
-            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, fixed_size)
+            # Surgical Fix: Use your new dynamic sizing logic
+            from core.logic import calculate_position_size
+            
+            balance = adapter.get_wallet_balance()
+            price = adapter.get_current_price(config.TRADING_SYMBOL)
+            
+            dynamic_size = calculate_position_size(
+                balance, 
+                price, 
+                state.state_manager.price_history
+            )
+            
+            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, price)
+            
             if trade_executed:
-                entry_price = adapter.get_current_price(config.TRADING_SYMBOL)
+                entry_price = price
                 position = {
                     'symbol': config.TRADING_SYMBOL,
                     'entry_price': entry_price,
-                    'size': fixed_size,
+                    'size': dynamic_size, # Use the dynamic size here
                     'timestamp': time.time()
                 }
                 state.state_manager.add_position(position)
-                
-                log_data = {
-                    'symbol': config.TRADING_SYMBOL,
-                    'action': 'BUY',
-                    'size': fixed_size,
-                    'price': entry_price,
-                    'pnl': 0,
-                    'reason': 'SIGNAL_APPROVAL'
-                }
-                core.logger.log_trade(log_data)
 
         elif signal_to_execute['type'] == 'SELL_SIGNAL':
-            trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, signal_to_execute['size'])
+            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, price)
 
         if trade_executed:
             state.state_manager.remove_pending_signal(signal_to_execute)
