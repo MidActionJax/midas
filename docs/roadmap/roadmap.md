@@ -17,16 +17,16 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 2: The "Smart Trader" Upgrade (CURRENT)
+## 🟢 Sprint 2: The "Smart Trader" Upgrade
 **Goal:** Teach the bot how to manage risk, track actual profit, and stop spamming.
-- [ ] **Take Profit / Stop Loss Logic:** Implement auto-selling. If a trade hits +$50 or -$20, the bot closes the position autonomously.
-- [ ] **Realized PnL Scoreboard:** Update the UI to show actual daily profit/loss (not just account balance).
-- [ ] **Anti-Spam Cooldowns:** Add a 5-minute cooldown timer so the bot ignores new Icebergs immediately after a trade.
-- [ ] **The "Trade Diary" (CSV Logger):** Make the bot save every approved trade (timestamp, price, iceberg size, and eventual profit/loss) to a `history.csv` file. *This is critical for Sprint 5.*
+- [x] **Take Profit / Stop Loss Logic:** Implement auto-selling. If a trade hits +$50 or -$20, the bot closes the position autonomously.
+- [x] **Realized PnL Scoreboard:** Update the UI to show actual daily profit/loss (not just account balance).
+- [x] **Anti-Spam Cooldowns:** Add a 5-minute cooldown timer so the bot ignores new Icebergs immediately after a trade.
+- [x] **The "Trade Diary" (CSV Logger):** Make the bot save every approved trade (timestamp, price, iceberg size, and eventual profit/loss) to a `history.csv` file. *This is critical for Sprint 5.*
 
 ---
 
-## ⚪ Sprint 3: Traditional Markets (The S&P 500)
+## 🟡 Sprint 3: Traditional Markets (The S&P 500) (CURRENT)
 **Goal:** Expand the bot's reach beyond Crypto into traditional futures.
 - [ ] **Interactive Brokers Integration:** Install and configure `ib_insync`.
 - [ ] **The Futures Adapter:** Build `paper_futures.py` and `live_futures.py` to match the existing Adapter interface.
