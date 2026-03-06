@@ -51,6 +51,10 @@ class StateManager:
         with self._lock:
             self.realized_pnl += amount
 
+    def get_realized_pnl(self):
+        with self._lock:
+            return self.realized_pnl
+
     def add_trade_to_history(self, trade):
         with self._lock:
             self.trade_history.append(trade)
