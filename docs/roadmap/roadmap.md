@@ -35,15 +35,15 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 4: Advanced Strategy & Risk Filters
+## 🟢 Sprint 4: Advanced Strategy & Risk Filters
 **Goal:** Make the bot highly selective about which Icebergs it shows you.
-- [ ] **Dynamic Sizing:** Stop using a fixed `0.1 BTC` size. Calculate position size based on account percentage and current market volatility (ATR).
-- [ ] **Trend Filtering:** Integrate basic moving averages. Rule: *Only show BUY signals if the price is above the 200 EMA.*
-- [ ] **The "Kill Switch":** Implement a Max Daily Drawdown rule. If the bot loses $500 in a day, it auto-locks the dashboard and refuses to trade until tomorrow.
+- [x] **Dynamic Sizing:** Stop using a fixed `0.1 BTC` size. Calculate position size based on account percentage and current market volatility (ATR).
+- [x] **Trend Filtering:** Integrate basic moving averages. Rule: *Only show BUY signals if the price is above the 200 EMA.*
+- [x] **The "Kill Switch":** Implement a Max Daily Drawdown rule. If the bot loses $500 in a day, it auto-locks the dashboard and refuses to trade until tomorrow.
 
 ---
 
-## ⚪ Sprint 5: Data Harvesting & Machine Learning Prep
+## 🟡 Sprint 5: Data Harvesting & Machine Learning Prep
 **Goal:** Prepare the system for Artificial Intelligence.
 - [ ] **Feature Engineering:** Expand the CSV logger to capture "context" (e.g., What time of day was it? Was the overall market trending up or down?).
 - [ ] **Data Pipeline:** Create a script to clean the `history.csv` data and label trades as `1` (Win) or `0` (Loss).
