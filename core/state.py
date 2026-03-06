@@ -5,6 +5,8 @@ class StateManager:
         self.market_data = {}
         self.pending_signals = []
         self.trade_history = []
+        self.active_positions = []
+        self.realized_pnl = 0.0
         self._lock = threading.Lock()
 
     def set_market_data(self, symbol, data):
@@ -44,6 +46,27 @@ class StateManager:
         """Gets the trade history."""
         with self._lock:
             return self.trade_history[:]
+
+    def add_position(self, pos):
+        with self._lock:
+            self.active_positions.append(pos)
+
+    def remove_position(self, pos):
+        with self._lock:
+            if pos in self.active_positions:
+                self.active_positions.remove(pos)
+
+    def get_active_positions(self):
+        with self._lock:
+            return self.active_positions.copy()
+
+    def add_pnl(self, amount):
+        with self._lock:
+            self.realized_pnl += amount
+
+    def get_realized_pnl(self):
+        with self._lock:
+            return self.realized_pnl
 
 # Global state manager instance
 state_manager = StateManager()

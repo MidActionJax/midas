@@ -34,6 +34,8 @@
                         <span>Engine Status: <span id="status-led" class="badge bg-secondary">OFFLINE</span></span>
                         <span class="fs-5">Balance: <span id="balance" class="text-info">Loading...</span></span>
                     </div>
+                    <p>Realized PnL: <span id="pnl" class="text-light">$0.00</span></p>
+                    <p>Open Positions: <span id="open-positions" class="text-info">0</span></p>
                     <p>Current Price (<span id="symbol">BTC/USDT</span>): <span id="price" class="text-warning">N/A</span></p>
                 </div>
                 <hr>
@@ -75,6 +77,8 @@
                     const led = document.getElementById('status-led');
                     const balanceEl = document.getElementById('balance');
                     const priceEl = document.getElementById('price');
+                    const pnlEl = document.getElementById('pnl');
+                    const openPositionsEl = document.getElementById('open-positions');
                     const bidsTable = document.getElementById('bids-table');
                     const asksTable = document.getElementById('asks-table');
                     const queueDiv = document.getElementById('approval-queue-section');
@@ -90,10 +94,22 @@
                     led.textContent = 'ONLINE'; led.className = 'badge bg-success';
                     priceEl.textContent = data.price + ' USDT';
                     
-                    // 2. Balance Update (Safe Check)
+                    // 2. Balance & PnL
                     if (data.balance !== undefined && data.balance !== "N/A") {
                         balanceEl.textContent = '$' + parseFloat(data.balance).toLocaleString('en-US', {minimumFractionDigits: 2});
                     }
+                    openPositionsEl.textContent = data.open_positions;
+                    
+                    const pnl = parseFloat(data.realized_pnl);
+                    pnlEl.textContent = '$' + pnl.toLocaleString('en-US', {minimumFractionDigits: 2});
+                    if (pnl > 0) {
+                        pnlEl.className = 'text-success';
+                    } else if (pnl < 0) {
+                        pnlEl.className = 'text-danger';
+                    } else {
+                        pnlEl.className = 'text-light';
+                    }
+
 
                     // 3. Tables Update
                     bidsTable.innerHTML = ''; asksTable.innerHTML = '';
