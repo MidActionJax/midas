@@ -11,6 +11,7 @@ class MidasEngine(threading.Thread):
         self._stop_event = threading.Event()
         self.trading_symbol = trading_symbol # Store it for the loop
         self.adapter = None
+        self.trading_symbol = None
         self.last_trade_time = 0
 
     def manage_positions(self):
@@ -71,9 +72,11 @@ class MidasEngine(threading.Thread):
                 if config.TRADING_MODE == 'PAPER_CRYPTO':
                     print("Initializing PaperCryptoAdapter...")
                     self.adapter = PaperCryptoAdapter()
-                elif config.TRADING_MODE == 'PAPER_FUTURES': # Add this block
+                    self.trading_symbol = config.TRADING_SYMBOL
+                elif config.TRADING_MODE == 'PAPER_FUTURES':
                     print("Initializing PaperFuturesAdapter...")
                     self.adapter = PaperFuturesAdapter()
+                    self.trading_symbol = 'ES'
 
             if self.adapter:
                 try:
@@ -83,8 +86,8 @@ class MidasEngine(threading.Thread):
                         time.sleep(1)
                         continue
 
-                    market_depth = self.adapter.get_market_depth(config.TRADING_SYMBOL)
-                    state.state_manager.set_market_data(config.TRADING_SYMBOL, market_depth)
+                    market_depth = self.adapter.get_market_depth(self.trading_symbol)
+                    state.state_manager.set_market_data(self.trading_symbol, market_depth)
 
                     signal = logic.analyze_order_book(market_depth, state.state_manager.price_history)
                     if signal:
@@ -99,11 +102,8 @@ class MidasEngine(threading.Thread):
                             state.state_manager.add_pending_signal(signal)
                             print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} !!!")
 
-                    price = self.adapter.get_current_price(config.TRADING_SYMBOL)
-                    if price is not None:
-                        state.state_manager.add_price(price)
-                    unit = "USD" if config.TRADING_SYMBOL == "ES" else "USDT"
-                    print(f"HEARTBEAT: Price of {config.TRADING_SYMBOL} is {price} {unit}")
+                    price = self.adapter.get_current_price(self.trading_symbol)
+                    print(f"HEARTBEAT: Price of {self.trading_symbol} is {price}")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
@@ -135,3 +135,4 @@ def stop_engine():
         engine_thread.join()
         engine_thread = None
         print("MidasEngine has been stopped.")
+

@@ -161,5 +161,16 @@ def reject_signal(signal_id):
     else:
         return jsonify({'status': 'error', 'message': 'Signal not found.'}), 404
 
+@app.route('/switch_mode', methods=['POST'])
+def switch_mode():
+    new_mode = request.json.get('mode')
+    if new_mode == 'PAPER_FUTURES':
+        config.TRADING_MODE = 'PAPER_FUTURES'
+        config.TRADING_SYMBOL = 'ES'
+    elif new_mode == 'PAPER_CRYPTO':
+        config.TRADING_MODE = 'PAPER_CRYPTO'
+        config.TRADING_SYMBOL = 'BTC/USDT'
+    return jsonify({'status': 'success', 'message': f"Mode switched to {new_mode}"})
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')

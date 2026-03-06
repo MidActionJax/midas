@@ -85,7 +85,7 @@ def analyze_order_book(order_book, price_history, threshold=0.5):
     if 'bids' in order_book and order_book['bids']:
         for price, size in order_book['bids']:
             if float(size) > threshold:
-                signal = {
+                return {
                     'type': 'BUY_SIGNAL',
                     'price': price,
                     'size': float(size),
@@ -98,7 +98,7 @@ def analyze_order_book(order_book, price_history, threshold=0.5):
     if not signal and 'asks' in order_book and order_book['asks']:
         for price, size in order_book['asks']:
             if float(size) > threshold:
-                signal = {
+                return {
                     'type': 'SELL_SIGNAL',
                     'price': price,
                     'size': float(size),

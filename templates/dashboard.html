@@ -25,7 +25,7 @@
                 <option value="PAPER_CRYPTO">Paper: Crypto (BTC)</option>
                 <option value="PAPER_FUTURES">Paper: Futures (S&P 500)</option>
             </select>
-            <a href="/start_bot" id="start-button" class="btn btn-success">Start Engine</a>
+            <a href="/start_bot" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
 
@@ -177,12 +177,15 @@
         setInterval(updateStatus, 1000);
         document.addEventListener('DOMContentLoaded', updateStatus);
 
-        // Restoration: Mode Switcher Listener
+        // Mode Switcher Listener
         document.getElementById('mode-selector').addEventListener('change', function(e) {
             const selectedMode = e.target.value;
+            
             fetch('/switch_mode', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({ mode: selectedMode })
             })
             .then(response => response.json())
