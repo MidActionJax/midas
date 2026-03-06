@@ -106,7 +106,7 @@ class PaperFuturesAdapter:
 
         return {'bids': bids, 'asks': asks}
 
-    def execute_buy(self, symbol, size):
+    def execute_buy(self, symbol, size, price):
         """
         Simulates the execution of a BUY order.
         """

@@ -26,7 +26,7 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟢 Sprint 3: Traditional Markets (The S&P 500) (CURRENT)
+## 🟢 Sprint 3: Traditional Markets (The S&P 500)
 **Goal:** Expand the bot's reach beyond Crypto into traditional futures.
 - [x] **Interactive Brokers Integration:** Install and configure `ib_insync`.
 - [x] **The Futures Adapter:** Build `paper_futures.py` and `live_futures.py` to match the existing Adapter interface.
@@ -43,7 +43,7 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 5: Data Harvesting & Machine Learning Prep
+## 🟡 Sprint 5: Data Harvesting & Machine Learning Prep (CURRENT)
 **Goal:** Prepare the system for Artificial Intelligence.
 - [ ] **Feature Engineering:** Expand the CSV logger to capture "context" (e.g., What time of day was it? Was the overall market trending up or down?).
 - [ ] **Data Pipeline:** Create a script to clean the `history.csv` data and label trades as `1` (Win) or `0` (Loss).
