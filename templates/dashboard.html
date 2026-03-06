@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Project Midas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #212529; }
+        .signal-card { border-left: 5px solid #ffc107; }
+        .table-container { max-height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center text-warning">Project Midas</h1>
+        <p class="text-center text-muted">Order Flow "Grey Box" System</p>
+
+        <div class="d-flex justify-content-center my-4">
+            <a href="/start_bot" class="btn btn-success me-2">Start Engine</a>
+            <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
+        </div>
+
+        <div id="approval-queue-section" class="mb-4" style="display: none;">
+            <h3 class="text-light">Approval Queue</h3>
+            <div id="approval-queue-cards"></div>
+        </div>
+
+        <div class="card text-white bg-dark border-secondary">
+            <div class="card-header">Live Feed</div>
+            <div class="card-body">
+                <div id="live-feed">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <span>Engine Status: <span id="status-led" class="badge bg-secondary">OFFLINE</span></span>
+                        <span class="fs-5">Balance: <span id="balance" class="text-info">Loading...</span></span>
+                    </div>
+                    <p>Current Price (<span id="symbol">BTC/USDT</span>): <span id="price" class="text-warning">N/A</span></p>
+                </div>
+                <hr>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5 class="text-success">Bids (Buy Orders)</h5>
+                        <div class="table-container">
+                            <table class="table table-dark table-striped table-sm">
+                                <thead><tr><th class="text-success">Price</th><th class="text-success">Size</th></tr></thead>
+                                <tbody id="bids-table"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h5 class="text-danger">Asks (Sell Orders)</h5>
+                        <div class="table-container">
+                            <table class="table table-dark table-striped table-sm">
+                                <thead><tr><th class="text-danger">Price</th><th class="text-danger">Size</th></tr></thead>
+                                <tbody id="asks-table"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Calls
+        function approveSignal(id) { fetch(`/approve_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
+        function rejectSignal(id) { fetch(`/reject_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
+
+        function updateStatus() {
+            fetch('/status')
+                .then(r => r.json())
+                .then(data => {
+                    // Elements
+                    const led = document.getElementById('status-led');
+                    const balanceEl = document.getElementById('balance');
+                    const priceEl = document.getElementById('price');
+                    const bidsTable = document.getElementById('bids-table');
+                    const asksTable = document.getElementById('asks-table');
+                    const queueDiv = document.getElementById('approval-queue-section');
+                    const cardsDiv = document.getElementById('approval-queue-cards');
+
+                    // 1. Basic Status
+                    document.getElementById('symbol').textContent = data.symbol;
+                    if (!data.active) {
+                        led.textContent = 'OFFLINE'; led.className = 'badge bg-danger';
+                        return; // Stop updating if offline
+                    }
+                    
+                    led.textContent = 'ONLINE'; led.className = 'badge bg-success';
+                    priceEl.textContent = data.price + ' USDT';
+                    
+                    // 2. Balance Update (Safe Check)
+                    if (data.balance !== undefined && data.balance !== "N/A") {
+                        balanceEl.textContent = '$' + parseFloat(data.balance).toLocaleString('en-US', {minimumFractionDigits: 2});
+                    }
+
+                    // 3. Tables Update
+                    bidsTable.innerHTML = ''; asksTable.innerHTML = '';
+                    if (data.market_depth) {
+                        (data.market_depth.bids || []).slice(0, 10).forEach(b => {
+                            bidsTable.innerHTML += `<tr><td class="text-success">${b[0]}</td><td>${b[1]}</td></tr>`;
+                        });
+                        (data.market_depth.asks || []).slice(0, 10).forEach(a => {
+                            asksTable.innerHTML += `<tr><td class="text-danger">${a[0]}</td><td>${a[1]}</td></tr>`;
+                        });
+                    }
+
+                    // 4. Approval Queue Update
+                    cardsDiv.innerHTML = '';
+                    if (data.pending_signals && data.pending_signals.length > 0) {
+                        queueDiv.style.display = 'block';
+                        data.pending_signals.forEach(s => {
+                            const color = s.type === 'BUY_SIGNAL' ? 'text-success' : 'text-danger';
+                            cardsDiv.innerHTML += `
+                                <div class="card bg-dark border-warning mb-2 signal-card">
+                                    <div class="card-body d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <h5 class="mb-0 ${color}">ICEBERG: ${s.size} @ ${s.price}</h5>
+                                            <small class="text-muted">${new Date(s.timestamp*1000).toLocaleTimeString()}</small>
+                                        </div>
+                                        <div>
+                                            <button onclick="approveSignal(${s.timestamp})" class="btn btn-success btn-sm me-2">Approve</button>
+                                            <button onclick="rejectSignal(${s.timestamp})" class="btn btn-danger btn-sm">Reject</button>
+                                        </div>
+                                    </div>
+                                </div>`;
+                        });
+                    } else {
+                        queueDiv.style.display = 'none';
+                    }
+                })
+                .catch(e => {
+                    console.error(e);
+                    document.getElementById('status-led').textContent = 'ERROR';
+                    document.getElementById('status-led').className = 'badge bg-warning text-dark';
+                });
+        }
+
+        // Run every 1 second
+        setInterval(updateStatus, 1000);
+        document.addEventListener('DOMContentLoaded', updateStatus);
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
