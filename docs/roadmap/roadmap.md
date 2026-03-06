@@ -26,16 +26,16 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 3: Traditional Markets (The S&P 500) (CURRENT)
+## 🟢 Sprint 3: Traditional Markets (The S&P 500) (CURRENT)
 **Goal:** Expand the bot's reach beyond Crypto into traditional futures.
-- [ ] **Interactive Brokers Integration:** Install and configure `ib_insync`.
-- [ ] **The Futures Adapter:** Build `paper_futures.py` and `live_futures.py` to match the existing Adapter interface.
-- [ ] **Data Normalization:** Ensure the S&P 500 E-mini (ES) order book data formats correctly into the existing UI tables.
-- [ ] **Contract Rollover Logic:** Add logic to handle futures contract expirations (e.g., switching from the March contract to the June contract).
+- [x] **Interactive Brokers Integration:** Install and configure `ib_insync`.
+- [x] **The Futures Adapter:** Build `paper_futures.py` and `live_futures.py` to match the existing Adapter interface.
+- [x] **Data Normalization:** Ensure the S&P 500 E-mini (ES) order book data formats correctly into the existing UI tables.
+- [x] **Contract Rollover Logic:** Add logic to handle futures contract expirations (e.g., switching from the March contract to the June contract).
 
 ---
 
-## ⚪ Sprint 4: Advanced Strategy & Risk Filters
+## 🟡 Sprint 4: Advanced Strategy & Risk Filters
 **Goal:** Make the bot highly selective about which Icebergs it shows you.
 - [ ] **Dynamic Sizing:** Stop using a fixed `0.1 BTC` size. Calculate position size based on account percentage and current market volatility (ATR).
 - [ ] **Trend Filtering:** Integrate basic moving averages. Rule: *Only show BUY signals if the price is above the 200 EMA.*

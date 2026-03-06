@@ -17,11 +17,11 @@ def analyze_order_book(order_book, threshold=0.5):
     # Check bids for buy signals
     if 'bids' in order_book and order_book['bids']:
         for price, size in order_book['bids']:
-            if size > threshold:
+            if float(size) > threshold:
                 return {
                     'type': 'BUY_SIGNAL',
                     'price': price,
-                    'size': size,
+                    'size': float(size),
                     'reason': 'Iceberg Detected',
                     'timestamp': time.time()
                 }
@@ -29,12 +29,12 @@ def analyze_order_book(order_book, threshold=0.5):
     # Check asks for sell signals
     if 'asks' in order_book and order_book['asks']:
         for price, size in order_book['asks']:
-            if size > threshold:
+            if float(size) > threshold:
                 return {
                     'type': 'SELL_SIGNAL',
                     'price': price,
-                    'size': size,
-                    'reason': 'Icegerg Detected',
+                    'size': float(size),
+                    'reason': 'Iceberg Detected',
                     'timestamp': time.time()
                 }
 
