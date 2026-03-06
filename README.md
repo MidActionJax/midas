@@ -1,0 +1,2 @@
+# midas
+A futures bot :)
