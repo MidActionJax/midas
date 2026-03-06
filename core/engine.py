@@ -11,7 +11,6 @@ class MidasEngine(threading.Thread):
         self._stop_event = threading.Event()
         self.trading_symbol = trading_symbol # Store it for the loop
         self.adapter = None
-        self.trading_symbol = None
         self.last_trade_time = 0
 
     def manage_positions(self):
@@ -104,6 +103,7 @@ class MidasEngine(threading.Thread):
 
                     price = self.adapter.get_current_price(self.trading_symbol)
                     print(f"HEARTBEAT: Price of {self.trading_symbol} is {price}")
+                    state.state_manager.add_price(price)
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
