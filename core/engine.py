@@ -2,14 +2,61 @@ import threading
 import time
 import config
 from adapters.paper_crypto import PaperCryptoAdapter
-from core import state, logic
+from core import state, logic, logger
 
 class MidasEngine(threading.Thread):
     def __init__(self):
         super().__init__()
         self._stop_event = threading.Event()
         self.adapter = None
-        self.daemon = True  # Allows main thread to exit even if this thread is running
+        self.last_trade_time = 0
+        self.daemon = True
+
+    def manage_positions(self):
+        """
+        Monitors active positions and triggers auto-sell based on PnL rules.
+        """
+        if not self.adapter:
+            return
+
+        positions_to_remove = []
+        for position in state.state_manager.get_active_positions():
+            try:
+                current_price = self.adapter.get_current_price(position['symbol'])
+                unrealized_pnl = (current_price - position['entry_price']) * position['size']
+                
+                reason = None
+                if unrealized_pnl >= 50:
+                    reason = 'TAKE_PROFIT'
+                elif unrealized_pnl <= -20:
+                    reason = 'STOP_LOSS'
+
+                if reason:
+                    print(f"!!! {reason} TRIGGERED: PnL = {unrealized_pnl:.2f} !!!")
+                    if self.adapter.execute_sell(position['symbol'], position['size']):
+                        state.state_manager.add_pnl(unrealized_pnl)
+                        
+                        log_data = {
+                            'symbol': position['symbol'],
+                            'action': 'SELL',
+                            'size': position['size'],
+                            'price': current_price,
+                            'pnl': unrealized_pnl,
+                            'reason': reason
+                        }
+                        logger.log_trade(log_data)
+                        
+                        positions_to_remove.append(position)
+                        self.last_trade_time = time.time()
+                    else:
+                        print(f"!!! FAILED TO EXECUTE {reason} SELL ORDER !!!")
+
+            except Exception as e:
+                print(f"Error managing position {position}: {e}")
+
+        for pos in positions_to_remove:
+            state.state_manager.remove_position(pos)
+
 
     def run(self):
         print("MidasEngine starting...")
@@ -18,20 +65,20 @@ class MidasEngine(threading.Thread):
                 if config.TRADING_MODE == 'PAPER_CRYPTO':
                     print("Initializing PaperCryptoAdapter...")
                     self.adapter = PaperCryptoAdapter()
-                # Add other modes here in the future
-                # elif config.TRADING_MODE == 'LIVE_CRYPTO':
-                #     self.adapter = LiveCryptoAdapter()
 
             if self.adapter:
                 try:
-                    # Fetch and store market data
+                    self.manage_positions()
+
+                    if time.time() - self.last_trade_time < 300: # 5-minute cooldown
+                        time.sleep(1)
+                        continue
+
                     market_depth = self.adapter.get_market_depth(config.TRADING_SYMBOL)
                     state.state_manager.set_market_data(config.TRADING_SYMBOL, market_depth)
 
-                    # Analyze for signals
                     signal = logic.analyze_order_book(market_depth)
                     if signal:
-                        # Check for duplicate signals before adding
                         pending_signals = state.state_manager.get_pending_signals()
                         is_duplicate = False
                         for existing_signal in pending_signals:
@@ -41,16 +88,15 @@ class MidasEngine(threading.Thread):
                         
                         if not is_duplicate:
                             state.state_manager.add_pending_signal(signal)
-                            print(f"!!! NEW SIGNAL DETECTED AND STORED: {signal['type']} at {signal['price']} for {signal['size']} !!!")
+                            print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} !!!")
 
-                    # Heartbeat
                     price = self.adapter.get_current_price(config.TRADING_SYMBOL)
-                    print(f"HEARTBEAT: Current price of {config.TRADING_SYMBOL} is {price} USDT")
+                    print(f"HEARTBEAT: Price of {config.TRADING_SYMBOL} is {price} USDT")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
             
-            time.sleep(5) # Increased sleep time to avoid spamming APIs and to give time for signals to be processed
+            time.sleep(5)
         
         print("MidasEngine stopped.")
 
@@ -61,7 +107,6 @@ class MidasEngine(threading.Thread):
 engine_thread = None
 
 def start_engine():
-    """Starts the MidasEngine thread."""
     global engine_thread
     if engine_thread is None or not engine_thread.is_alive():
         engine_thread = MidasEngine()
@@ -69,7 +114,6 @@ def start_engine():
         print("MidasEngine has been started.")
 
 def stop_engine():
-    """Stops the MidasEngine thread."""
     global engine_thread
     if engine_thread and engine_thread.is_alive():
         engine_thread.stop()

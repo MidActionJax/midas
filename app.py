@@ -1,6 +1,7 @@
 from flask import Flask, render_template, jsonify, redirect, url_for, request
-import core.engine  # CHANGED: Import the module, not the variable
+import core.engine
 from core import state
+import core.logger
 import config
 import time
 
@@ -34,10 +35,12 @@ def status():
     status_data = {
         'active': False,
         'price': "N/A",
-        'balance': "N/A",  # Added default balance
+        'balance': "N/A",
         'symbol': config.TRADING_SYMBOL,
         'market_depth': None,
-        'pending_signals': []
+        'pending_signals': [],
+        'realized_pnl': state.state_manager.get_realized_pnl(),
+        'open_positions': len(state.state_manager.get_active_positions())
     }
     
     # Check if the engine thread exists and is running
@@ -72,7 +75,6 @@ def status():
 
 @app.route('/approve_signal/<float:signal_id>', methods=['POST'])
 def approve_signal(signal_id):
-    # CHANGED: Check module variable
     if not core.engine.engine_thread or not core.engine.engine_thread.is_alive() or not core.engine.engine_thread.adapter:
         return jsonify({'status': 'error', 'message': 'Engine not running.'}), 400
 
@@ -89,16 +91,32 @@ def approve_signal(signal_id):
         adapter = core.engine.engine_thread.adapter
         trade_executed = False
         if signal_to_execute['type'] == 'BUY_SIGNAL':
-            # CHANGED: Buy a fixed 0.1 BTC (~$9,000) instead of the full iceberg size
             fixed_size = 0.1 
             trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, fixed_size)
+            if trade_executed:
+                entry_price = adapter.get_current_price(config.TRADING_SYMBOL)
+                position = {
+                    'symbol': config.TRADING_SYMBOL,
+                    'entry_price': entry_price,
+                    'size': fixed_size,
+                    'timestamp': time.time()
+                }
+                state.state_manager.add_position(position)
+                
+                log_data = {
+                    'symbol': config.TRADING_SYMBOL,
+                    'action': 'BUY',
+                    'size': fixed_size,
+                    'price': entry_price,
+                    'pnl': 0,
+                    'reason': 'SIGNAL_APPROVAL'
+                }
+                core.logger.log_trade(log_data)
+
         elif signal_to_execute['type'] == 'SELL_SIGNAL':
             trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, signal_to_execute['size'])
 
         if trade_executed:
-            trade_record = signal_to_execute.copy()
-            trade_record.update({'status': 'EXECUTED', 'executed_at': time.time()})
-            state.state_manager.add_trade_to_history(trade_record)
             state.state_manager.remove_pending_signal(signal_to_execute)
             return jsonify({'status': 'success', 'message': f"Trade executed for signal {signal_id}"})
         else:
