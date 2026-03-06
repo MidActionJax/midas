@@ -13,6 +13,10 @@
 </head>
 <body>
     <div class="container mt-5">
+        <div id="kill-switch-alert" class="alert alert-danger text-center" role="alert" style="display: none;">
+            <strong>CRITICAL: DAILY DRAWDOWN LIMIT REACHED. TRADING SUSPENDED.</strong>
+        </div>
+
         <h1 class="text-center text-warning">Project Midas</h1>
         <p class="text-center text-muted">Order Flow "Grey Box" System</p>
 
@@ -87,6 +91,17 @@
                     const asksTable = document.getElementById('asks-table');
                     const queueDiv = document.getElementById('approval-queue-section');
                     const cardsDiv = document.getElementById('approval-queue-cards');
+                    const startButton = document.getElementById('start-button');
+                    const killSwitchAlert = document.getElementById('kill-switch-alert');
+
+                    // 0. Handle Kill Switch
+                    if (data.kill_switch_active) {
+                        killSwitchAlert.style.display = 'block';
+                        startButton.classList.add('disabled');
+                        startButton.classList.remove('btn-success');
+                        startButton.classList.add('btn-secondary');
+                        startButton.textContent = 'LOCKED';
+                    }
 
                     // 1. Basic Status
                     document.getElementById('symbol').textContent = data.symbol;
