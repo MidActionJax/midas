@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, redirect, url_for, request
 import core.engine
 from core import state
 import core.logger
+from core.logic import brain # ADDED
 import config
 import time
 
@@ -164,6 +165,14 @@ def reject_signal(signal_id):
         return jsonify({'status': 'success', 'message': f"Signal {signal_id} rejected."})
     else:
         return jsonify({'status': 'error', 'message': 'Signal not found.'}), 404
+
+@app.route('/retrain')
+def retrain():
+    """Triggers the ML model retraining process."""
+    print("--- Received request to retrain model... ---")
+    success = brain.retrain_model()
+    # TODO: Add flash messaging to tell the user if it succeeded
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
