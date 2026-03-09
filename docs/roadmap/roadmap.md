@@ -49,6 +49,10 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 - [ ] **Data Pipeline:** Create a script to clean the `history.csv` data and label trades as `1` (Win) or `0` (Loss).
 - [ ] **Model Selection:** Set up a local Python ML environment using `scikit-learn` or `XGBoost`.
 - [ ] **Initial Training:** Train a baseline classification model on the bot's paper-trading history.
+- [ ] The "Truth Engine" Logger: Build core/logger.py to capture Whale Size, EMA Trend, and ATR Volatility for every signal.
+- [ ] Objective Labeling: Implement a post-trade "Closing Script" that updates the CSV with the Final PnL result (1 for Win / 0 for Loss).
+- [ ] Human-vs-Market Audit: Log both the user's decision (Approve/Reject) and the market outcome to help the AI identify when the user is "wrong".
+- [ ] Model Selection: Set up a local Python environment with scikit-learn or XGBoost to begin analyzing the captured history.csv.
 
 ---
 
