@@ -43,20 +43,20 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 5: Data Harvesting & Machine Learning Prep (CURRENT)
+## 🟢 Sprint 5: Data Harvesting & Machine Learning Prep
 **Goal:** Prepare the system for Artificial Intelligence.
-- [ ] **Feature Engineering:** Expand the CSV logger to capture "context" (e.g., What time of day was it? Was the overall market trending up or down?).
-- [ ] **Data Pipeline:** Create a script to clean the `history.csv` data and label trades as `1` (Win) or `0` (Loss).
-- [ ] **Model Selection:** Set up a local Python ML environment using `scikit-learn` or `XGBoost`.
-- [ ] **Initial Training:** Train a baseline classification model on the bot's paper-trading history.
-- [ ] The "Truth Engine" Logger: Build core/logger.py to capture Whale Size, EMA Trend, and ATR Volatility for every signal.
-- [ ] Objective Labeling: Implement a post-trade "Closing Script" that updates the CSV with the Final PnL result (1 for Win / 0 for Loss).
-- [ ] Human-vs-Market Audit: Log both the user's decision (Approve/Reject) and the market outcome to help the AI identify when the user is "wrong".
-- [ ] Model Selection: Set up a local Python environment with scikit-learn or XGBoost to begin analyzing the captured history.csv.
+- [x] **Feature Engineering:** Expand the CSV logger to capture "context" (e.g., What time of day was it? Was the overall market trending up or down?).
+- [x] **Data Pipeline:** Create a script to clean the `history.csv` data and label trades as `1` (Win) or `0` (Loss).
+- [x] **Model Selection:** Set up a local Python ML environment using `scikit-learn` or `XGBoost`.
+- [x] **Initial Training:** Train a baseline classification model on the bot's paper-trading history.
+- [x] The "Truth Engine" Logger: Build core/logger.py to capture Whale Size, EMA Trend, and ATR Volatility for every signal.
+- [x] Objective Labeling: Implement a post-trade "Closing Script" that updates the CSV with the Final PnL result (1 for Win / 0 for Loss).
+- [x] Human-vs-Market Audit: Log both the user's decision (Approve/Reject) and the market outcome to help the AI identify when the user is "wrong".
+- [x] Model Selection: Set up a local Python environment with scikit-learn or XGBoost to begin analyzing the captured history.csv.
 
 ---
 
-## ⚪ Sprint 6: The ML Co-Pilot
+## 🟡 Sprint 6: The ML Co-Pilot (CURRENT)
 **Goal:** Merge the trained ML model with the live trading engine.
 - [ ] **Model Inference:** Load the trained ML model into `core/logic.py`.
 - [ ] **The Confidence Score:** Whenever an Iceberg is detected, feed current market conditions into the ML model to get a "Probability of Success" score.
