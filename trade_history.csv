@@ -1,5 +1,24 @@
-timestamp,symbol,action,size,price,pnl,reason
-2026-03-06 11:01:36,BTC/USDT,BUY,0.1,68129.37,0,SIGNAL_APPROVAL
-2026-03-06 11:01:41,BTC/USDT,BUY,0.1,68129.37,0,SIGNAL_APPROVAL
-2026-03-06 11:01:54,BTC/USDT,SELL,0.1,68204.1,7.473000000001048,TAKE_PROFIT
-2026-03-06 11:01:54,BTC/USDT,SELL,0.1,68204.1,7.473000000001048,TAKE_PROFIT
+timestamp_id,symbol,type,price,size,ema_200_val,trend_dir,atr_volatility,session_context,whale_strength,user_decision,final_pnl,outcome_label
+,BTC/USDT,,68129.37,0.1,,,,,,,,
+,BTC/USDT,,68129.37,0.1,,,,,,,,
+,BTC/USDT,,68204.1,0.1,,,,,,,,
+,BTC/USDT,,68204.1,0.1,,,,,,,,
+,BTC/USDT,,3.36,6715.25,,,,,,,,
+,BTC/USDT,,1.8,6716.5,,,,,,,,
+,BTC/USDT,,4.02,6716.5,,,,,,,,
+,BTC/USDT,,1.72,6717.5,,,,,,,,
+,BTC/USDT,,2.91,6717.25,,,,,,,,
+,BTC/USDT,,4.69,6716.25,,,,,,,,
+,BTC/USDT,,2.5,6717.5,,,,,,,,
+,BTC/USDT,,2.41,6717.25,,,,,,,,
+,BTC/USDT,,4.71,6733.5,,,,,,,,
+,BTC/USDT,,2.18,6734.5,,,,,,,,
+,BTC/USDT,,4.59,6726.0,,,,,,,,
+,BTC/USDT,,2.03,6725.0,,,,,,,,
+,BTC/USDT,,4.74,6722.25,,,,,,,,
+,BTC/USDT,,1.83,6722.0,,,,,,,,
+,BTC/USDT,,1.76,6705.5,,,,,,,,
+,BTC/USDT,,1.41,6705.5,,,,,,,,
+,BTC/USDT,,4.82,6705.0,,,,,,,,
+,BTC/USDT,,3.23,6708.0,,,,,,APPROVED,,
+1773078151.1723,BTC/USDT,BUY_SIGNAL,6707.25,2.76,6706.7,UP,0.0,Unknown,0.8471454880294659,APPROVED,,

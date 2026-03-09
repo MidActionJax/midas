@@ -91,6 +91,9 @@ def switch_mode():
 
 @app.route('/approve_signal/<float:signal_id>', methods=['POST'])
 def approve_signal(signal_id):
+    # Log the user's decision
+    core.logger.update_user_decision(signal_id, 'APPROVED')
+
     if not core.engine.engine_thread or not core.engine.engine_thread.is_alive() or not core.engine.engine_thread.adapter:
         return jsonify({'status': 'error', 'message': 'Engine not running.'}), 400
 
@@ -126,8 +129,9 @@ def approve_signal(signal_id):
                 position = {
                     'symbol': config.TRADING_SYMBOL,
                     'entry_price': entry_price,
-                    'size': dynamic_size, # Use the dynamic size here
-                    'timestamp': time.time()
+                    'size': dynamic_size,
+                    'timestamp': time.time(),
+                    'signal_timestamp': signal_id # Link position to the original signal
                 }
                 state.state_manager.add_position(position)
 
@@ -146,6 +150,9 @@ def approve_signal(signal_id):
 
 @app.route('/reject_signal/<float:signal_id>', methods=['POST'])
 def reject_signal(signal_id):
+    # Log the user's decision
+    core.logger.update_user_decision(signal_id, 'REJECTED')
+
     signal_to_remove = None
     for signal in state.state_manager.get_pending_signals():
         if signal['timestamp'] == signal_id:
@@ -154,9 +161,6 @@ def reject_signal(signal_id):
             
     if signal_to_remove:
         state.state_manager.remove_pending_signal(signal_to_remove)
-        trade_record = signal_to_remove.copy()
-        trade_record.update({'status': 'REJECTED', 'executed_at': time.time()})
-        state.state_manager.add_trade_to_history(trade_record)
         return jsonify({'status': 'success', 'message': f"Signal {signal_id} rejected."})
     else:
         return jsonify({'status': 'error', 'message': 'Signal not found.'}), 404

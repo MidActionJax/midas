@@ -74,7 +74,7 @@ class StateManager:
     def add_price(self, price):
         with self._lock:
             self.price_history.append(price)
-            self.price_history = self.price_history[-200:]
+            self.price_history = self.price_history[-5:]
 
 # Instantiate the global state manager
 state_manager = StateManager()
