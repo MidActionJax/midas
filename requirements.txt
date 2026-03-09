@@ -38,3 +38,4 @@ pandas
 backports.zoneinfo
 scikit-learn
 waitress==3.0.2
+matplotlib
