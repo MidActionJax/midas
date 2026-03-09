@@ -65,9 +65,36 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 7: Deployment & Hardening (CURRENT)
+## 🟢 Sprint 7: Deployment & Hardening
 **Goal:** Move the bot off the local laptop and into a secure, 24/7 cloud environment.
 - [ ] **Cloud Hosting:** Deploy the system to a Linux VPS (DigitalOcean/AWS/Google Cloud).
-- [ ] **Web Server Config:** Replace the Flask dev server with Gunicorn and Nginx.
-- [ ] **Security (Auth):** Add a login screen. The dashboard must be password-protected so no one else can access the URL and click "Approve."
-- [ ] **Process Management:** Use `systemd` or `pm2` so the bot automatically restarts if the server crashes.
+- [x] **Web Server Config:** Replace the Flask dev server with Gunicorn and Nginx.
+- [x] **Security (Auth):** Add a login screen. The dashboard must be password-protected so no one else can access the URL and click "Approve."
+- [x] **Process Management:** Use `systemd` or `pm2` so the bot automatically restarts if the server crashes.
+
+---
+
+## 🟡 Sprint 8: Machine Learning & Historical Intelligence (CURRENT)
+**Goal:** Transition from a rule-based script to a predictive "Truth Engine" by training on historical data.
+- [ ] **Historical Data Scraper**: Build a utility to download 1 year of 1-minute historical candlestick data for MES and MNQ directly from the IBKR API.
+- [ ] **Signal Classifier (ML Filter)**: Use scikit-learn to train a model that assigns a "Success Probability" to every signal based on time, volatility, and Nasdaq correlation.
+- [ ] **Backtesting "Time Machine"**: Create a simulation script to run the Midas Logic against historical data to verify PnL before risking real capital.
+- [ ] **Intelligence Integration**: Update logic.py to allow the ML model to "Veto" any trade where the historical success probability is below 60%.
+
+---
+
+## 🟣 Sprint 9: Real-Time Sync & Live Controls
+**Goal**: Connect the dashboard to your actual financial data and enable "One-Click" mode switching.
+- [ ] **Live Balance & PnL Sync**: Update paper_futures.py to pull your actual Net Liquidation Value and 24-hour PnL directly from your Interactive Brokers account.
+- [ ] **The "Master Switch"**: Add a toggle on the dashboard to switch between "Paper" and "Live" modes without manually editing config.py.
+- [ ] **Performance Audit HUD**: Add a visual "Daily Scorecard" specifically tracking wins, losses, and profit for the current 24-hour window.
+- [ ] **Execution Logger**: Expand the dashboard to show the last 10 trades with specific details on why they were closed (e.g., Hit Take Profit vs. Stop Loss).
+- [ ] **Account-Aware Position Sizing**: Logic that checks your actual IBKR balance. If you have $50, it strictly buys 1 contract; as your balance grows, it scales up automatically.
+
+---
+
+## 🟣 Sprint 10: The "Midas" Terminal Overhaul
+**Goal**: Transform the current "mad ugly" interface into a professional, high-fidelity trading desk.
+- [ ] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that matches your Shrood branding.
+- [ ] **Interactive Equity Curve**: Integrate Chart.js to plot a live line graph of your account balance growth over time.
+- [ ] **Correlation Heatmap**: Add a visual "Sync Meter" showing exactly how closely the S&P and Nasdaq have been correlated over the last hour.

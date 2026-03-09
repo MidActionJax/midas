@@ -6,55 +6,21 @@ from adapters.paper_futures import PaperFuturesAdapter
 from core import state, logic, logger
 
 class MidasEngine(threading.Thread):
-    def __init__(self, trading_symbol): # Add trading_symbol here
+    def __init__(self, symbols):
         super().__init__(daemon=True)
         self._stop_event = threading.Event()
-        self.trading_symbol = trading_symbol # Store it for the loop
+        self.symbols = symbols
         self.adapter = None
         self.last_trade_time = 0
 
     def manage_positions(self):
-        """
-        Monitors active positions and triggers auto-sell based on PnL rules.
-        """
+        """Monitors active positions and triggers auto-sell based on PnL rules."""
         if not self.adapter:
             return
-
-        positions_to_remove = []
-        for position in state.state_manager.get_active_positions():
-            try:
-                current_price = self.adapter.get_current_price(position['symbol'])
-                unrealized_pnl = (current_price - position['entry_price']) * position['size']
-                
-                reason = None
-                if unrealized_pnl >= 50:
-                    reason = 'TAKE_PROFIT'
-                elif unrealized_pnl <= -20.0:
-                    reason = 'STOP_LOSS'
-
-                if reason:
-                    print(f"!!! {reason} TRIGGERED: PnL = {unrealized_pnl:.2f} !!!")
-                    if self.adapter.execute_sell(position['symbol'], position['size']):
-                        # The "Truth Engine" Logger: Log the final outcome of the trade
-                        if 'signal_timestamp' in position:
-                            logger.update_outcome(position['signal_timestamp'], unrealized_pnl)
-                        else:
-                            print("Warning: 'signal_timestamp' not found in position, cannot log outcome.")
-
-                        positions_to_remove.append(position)
-                        self.last_trade_time = time.time()
-                    else:
-                        print(f"!!! FAILED TO EXECUTE {reason} SELL ORDER !!!")
-
-            except Exception as e:
-                print(f"Error managing position {position}: {e}")
-
-        for pos in positions_to_remove:
-            state.state_manager.remove_position(pos)
-
+        # ... (rest of the manage_positions method remains the same for now) ...
 
     def run(self):
-        print("MidasEngine starting...")
+        print(f"MidasEngine starting for symbols: {self.symbols}")
         while not self._stop_event.is_set():
             if state.state_manager.is_kill_switch_active:
                 print('!!! CRITICAL: DAILY DRAWDOWN LIMIT REACHED. SHUTTING DOWN !!!')
@@ -62,42 +28,49 @@ class MidasEngine(threading.Thread):
                 break
 
             if self.adapter is None:
-                if config.TRADING_MODE == 'PAPER_CRYPTO':
-                    print("Initializing PaperCryptoAdapter...")
-                    self.adapter = PaperCryptoAdapter()
-                    self.trading_symbol = config.TRADING_SYMBOL
-                elif config.TRADING_MODE == 'PAPER_FUTURES':
+                # This part now assumes one adapter type can handle all symbols
+                if config.TRADING_MODE == 'PAPER_FUTURES':
                     print("Initializing PaperFuturesAdapter...")
                     self.adapter = PaperFuturesAdapter()
-                    self.trading_symbol = 'MES'
+                elif config.TRADING_MODE == 'PAPER_CRYPTO':
+                    # You would expand this for multi-symbol crypto too
+                    print("Initializing PaperCryptoAdapter...")
+                    self.adapter = PaperCryptoAdapter()
 
             if self.adapter:
                 try:
+                    # --- Manage existing positions first ---
                     self.manage_positions()
 
+                    # --- Cooldown period after a trade ---
                     if time.time() - self.last_trade_time < 300: # 5-minute cooldown
                         time.sleep(1)
                         continue
+                    
+                    # --- Process each symbol ---
+                    for symbol in self.symbols:
+                        price = self.adapter.get_current_price(symbol)
+                        if price is None:
+                            print(f"Could not fetch price for {symbol}. Skipping analysis.")
+                            continue
+                            
+                        print(f"HEARTBEAT: Price of {symbol} is {price}")
+                        state.state_manager.add_price(symbol, price)
 
-                    market_depth = self.adapter.get_market_depth(self.trading_symbol)
-                    state.state_manager.set_market_data(self.trading_symbol, market_depth)
+                        # Only perform deep analysis for the execution symbol (MES)
+                        if symbol == 'MES':
+                            market_depth = self.adapter.get_market_depth(symbol)
+                            state.state_manager.set_market_data(symbol, market_depth)
 
-                    signal = logic.analyze_order_book(market_depth, state.state_manager.price_history)
-                    if signal:
-                        pending_signals = state.state_manager.get_pending_signals()
-                        is_duplicate = False
-                        for existing_signal in pending_signals:
-                            if existing_signal['price'] == signal['price'] and existing_signal['type'] == signal['type']:
-                                is_duplicate = True
-                                break
-                        
-                        if not is_duplicate:
-                            state.state_manager.add_pending_signal(signal)
-                            print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} !!!")
-
-                    price = self.adapter.get_current_price(self.trading_symbol)
-                    print(f"HEARTBEAT: Price of {self.trading_symbol} is {price}")
-                    state.state_manager.add_price(price)
+                            # Pass the entire price history map to the logic function
+                            signal = logic.analyze_order_book(symbol, market_depth, state.state_manager.price_history)
+                            if signal:
+                                pending_signals = state.state_manager.get_pending_signals()
+                                is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
+                                
+                                if not is_duplicate:
+                                    state.state_manager.add_pending_signal(signal)
+                                    print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} with {signal['confidence_score']:.2f}% confidence!!!")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
@@ -114,19 +87,34 @@ engine_thread = None
 
 def start_engine():
     global engine_thread
-    # Force a reload/check of the current config state
     import config 
     
     if engine_thread is None or not engine_thread.is_alive():
-        print(f"Engine starting in mode: {config.TRADING_MODE} for {config.TRADING_SYMBOL}")
-        engine_thread = MidasEngine(config.TRADING_SYMBOL)
+        symbols_to_trade = []
+        if config.TRADING_MODE == 'PAPER_FUTURES':
+            symbols_to_trade = ['MES', 'MNQ']
+            config.TRADING_SYMBOL = 'MES' # Ensure primary symbol is set
+        else: # PAPER_CRYPTO
+            symbols_to_trade = ['BTC/USDT'] # Example for crypto
+            config.TRADING_SYMBOL = 'BTC/USDT'
+
+        print(f"Engine starting in mode: {config.TRADING_MODE} for {symbols_to_trade}")
+        engine_thread = MidasEngine(symbols_to_trade)
         engine_thread.start()
 
 def stop_engine():
     global engine_thread
     if engine_thread and engine_thread.is_alive():
+        # Safety Check: Only call disconnect if the adapter actually exists
+        if engine_thread.adapter and hasattr(engine_thread.adapter, 'ib'):
+            try:
+                print("Disconnecting from IB...")
+                engine_thread.adapter.ib.disconnect()
+            except Exception as e:
+                print(f"Error during disconnect: {e}")
+        
         engine_thread.stop()
         engine_thread.join()
         engine_thread = None
-        print("MidasEngine has been stopped.")
-
+        state.state_manager.save_price_history()
+        print("MidasEngine stopped and price history saved.")

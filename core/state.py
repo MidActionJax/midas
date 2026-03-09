@@ -1,19 +1,24 @@
 import threading
+import json
+import os
 
 class StateManager:
     """
     Manages the shared state between the Flask web server and the background trading engine.
     Uses a thread-safe lock to prevent race conditions.
     """
-    def __init__(self):
+    def __init__(self, state_file='ema_state.json'):
         self._lock = threading.Lock()
         self.market_data = {}
         self.pending_signals = []
         self.active_positions = []
         self.realized_pnl = 0.0
         self.trade_history = []
-        self.price_history = []
+        self.price_history = {'MES': [], 'MNQ': []}
+        self.ema_val = {'MES': None, 'MNQ': None}
         self.daily_drawdown_limit = -500.0
+        self.state_file = state_file
+        self.load_price_history()
 
     @property
     def is_kill_switch_active(self):
@@ -71,10 +76,27 @@ class StateManager:
         with self._lock:
             self.trade_history.append(trade)
 
-    def add_price(self, price):
+    def add_price(self, symbol, price):
         with self._lock:
-            self.price_history.append(price)
-            self.price_history = self.price_history[-5:] #CHANGE TO -200?
+            if symbol not in self.price_history:
+                self.price_history[symbol] = []
+            self.price_history[symbol].append(price)
+            self.price_history[symbol] = self.price_history[symbol][-200:]
+
+    def save_price_history(self):
+        with self._lock:
+            with open(self.state_file, 'w') as f:
+                json.dump(self.price_history, f)
+
+    def load_price_history(self):
+        if not os.path.exists(self.state_file):
+            return
+        with self._lock:
+            with open(self.state_file, 'r') as f:
+                self.price_history = json.load(f)
+            print(f"--- Loaded price history from {self.state_file} ---")
+            for symbol, prices in self.price_history.items():
+                print(f"    - {symbol}: {len(prices)} prices")
 
 # Instantiate the global state manager
 state_manager = StateManager()

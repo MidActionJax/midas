@@ -3,8 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TRADING_MODE = os.getenv('TRADING_MODE', 'PAPER_CRYPTO')
-TRADING_SYMBOL = os.getenv('TRADING_SYMBOL', 'BTC/USDT')
+TRADING_MODE = os.getenv('TRADING_MODE', 'PAPER_FUTURES')
+TRADING_SYMBOL = os.getenv('TRADING_SYMBOL', 'MES')
 
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET = os.getenv('BINANCE_SECRET')
