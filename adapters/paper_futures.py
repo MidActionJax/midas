@@ -19,7 +19,7 @@ class PaperFuturesAdapter:
             self.ib.reqMarketDataType(3)
 
             # Define the S&P 500 E-mini continuous futures contract
-            self.contract = ContFuture('ES', 'CME')
+            self.contract = ContFuture('MES', 'CME')
             
             # Qualify the contract to make sure it's recognized by IB
             print("Qualifying contract...")

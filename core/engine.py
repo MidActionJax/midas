@@ -69,7 +69,7 @@ class MidasEngine(threading.Thread):
                 elif config.TRADING_MODE == 'PAPER_FUTURES':
                     print("Initializing PaperFuturesAdapter...")
                     self.adapter = PaperFuturesAdapter()
-                    self.trading_symbol = 'ES'
+                    self.trading_symbol = 'MES'
 
             if self.adapter:
                 try:
