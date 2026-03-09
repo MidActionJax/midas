@@ -29,6 +29,30 @@
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
 
+        <div class="card text-white bg-dark border-secondary mb-4">
+            <div class="card-header">Performance Scorecard</div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col">
+                        <h4 class="text-warning">Win Rate</h4>
+                        <p id="win-rate" class="fs-3">0%</p>
+                    </div>
+                    <div class="col">
+                        <h4 class="text-warning">Total PnL</h4>
+                        <p id="total-pnl" class="fs-3">$0</p>
+                    </div>
+                    <div class="col">
+                        <h4 class="text-success">Avg. Winner</h4>
+                        <p id="avg-win" class="fs-3">$0</p>
+                    </div>
+                    <div class="col">
+                        <h4 class="text-danger">Avg. Loser</h4>
+                        <p id="avg-loss" class="fs-3">$0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div id="approval-queue-section" class="mb-4" style="display: none;">
             <h3 class="text-light">Approval Queue</h3>
             <div id="approval-queue-cards"></div>
@@ -39,12 +63,18 @@
             <div class="card-body">
                 <div id="live-feed">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <span>Engine Status: <span id="status-led" class="badge bg-secondary">OFFLINE</span></span>
+                        <div>
+                            <span>Engine Status: <span id="status-led" class="badge bg-secondary">OFFLINE</span></span>
+                            <span id="nasdaq-status-container" style="display: none;"> | Nasdaq Status: <span id="nasdaq-status" class="badge bg-secondary">UNKNOWN</span></span>
+                        </div>
                         <span class="fs-5">Balance: <span id="balance" class="text-info">Loading...</span></span>
                     </div>
                     <p>Realized PnL: <span id="pnl" class="text-light">$0.00</span></p>
                     <p>Open Positions: <span id="open-positions" class="text-info">0</span></p>
-                    <p>Current Price (<span id="symbol">BTC/USDT</span>): <span id="price" class="text-warning">N/A</span></p>
+                    <p>
+                        Current Price (<span id="symbol">BTC/USDT</span>): <span id="price" class="text-warning">N/A</span>
+                        <span id="nasdaq-ema-container" style="display: none;">| MNQ EMA: <span id="nasdaq-ema" class="text-info">N/A</span></span>
+                    </p>
                 </div>
                 <hr>
                 
@@ -97,6 +127,14 @@
                     const cardsDiv = document.getElementById('approval-queue-cards');
                     const startButton = document.getElementById('start-button');
                     const killSwitchAlert = document.getElementById('kill-switch-alert');
+                    const nasdaqStatusContainer = document.getElementById('nasdaq-status-container');
+                    const nasdaqStatus = document.getElementById('nasdaq-status');
+                    const nasdaqEmaContainer = document.getElementById('nasdaq-ema-container');
+                    const nasdaqEma = document.getElementById('nasdaq-ema');
+                    const winRateEl = document.getElementById('win-rate');
+                    const totalPnlEl = document.getElementById('total-pnl');
+                    const avgWinEl = document.getElementById('avg-win');
+                    const avgLossEl = document.getElementById('avg-loss');
 
                     // 0. Handle Kill Switch
                     if (data.kill_switch_active) {
@@ -109,14 +147,37 @@
 
                     // 1. Basic Status
                     document.getElementById('symbol').textContent = data.symbol;
+                    if (data.symbol === 'MES') {
+                        nasdaqStatusContainer.style.display = 'inline';
+                        nasdaqEmaContainer.style.display = 'inline';
+                    } else {
+                        nasdaqStatusContainer.style.display = 'none';
+                        nasdaqEmaContainer.style.display = 'none';
+                    }
+
                     if (!data.active) {
                         led.textContent = 'OFFLINE'; led.className = 'badge bg-danger';
                         return; // Stop updating if offline
                     }
                     
                     led.textContent = 'ONLINE'; led.className = 'badge bg-success';
-                    const unit = (data.symbol === 'ES') ? ' USD' : ' USDT';
+                    const unit = (data.symbol === 'MES') ? ' USD' : ' USDT';
                     priceEl.textContent = data.price + unit;
+
+                    // Nasdaq Status
+                    if (data.nasdaq_status) {
+                        nasdaqStatus.textContent = data.nasdaq_status;
+                        if (data.nasdaq_status === 'BULLISH') {
+                            nasdaqStatus.className = 'badge bg-success';
+                        } else if (data.nasdaq_status === 'BEARISH') {
+                            nasdaqStatus.className = 'badge bg-danger';
+                        } else {
+                            nasdaqStatus.className = 'badge bg-secondary';
+                        }
+                    }
+                    if (data.nasdaq_ema) {
+                        nasdaqEma.textContent = data.nasdaq_ema.toFixed(2);
+                    }
                     
                     // 2. Balance & PnL
                     if (data.balance !== undefined && data.balance !== "N/A") {
@@ -132,6 +193,22 @@
                         pnlEl.className = 'text-danger';
                     } else {
                         pnlEl.className = 'text-light';
+                    }
+
+                    // Performance Scorecard
+                    if (data.performance) {
+                        winRateEl.textContent = data.performance.win_rate + '%';
+                        totalPnlEl.textContent = '$' + data.performance.total_pnl.toLocaleString('en-US', {minimumFractionDigits: 2});
+                        avgWinEl.textContent = '$' + data.performance.avg_win.toLocaleString('en-US', {minimumFractionDigits: 2});
+                        avgLossEl.textContent = '$' + data.performance.avg_loss.toLocaleString('en-US', {minimumFractionDigits: 2});
+
+                        if (data.performance.win_rate > 60) {
+                            winRateEl.className = 'fs-3 text-success';
+                        } else if (data.performance.win_rate < 45) {
+                            winRateEl.className = 'fs-3 text-danger';
+                        } else {
+                            winRateEl.className = 'fs-3 text-warning';
+                        }
                     }
 
 
@@ -163,7 +240,7 @@
                                 badgeColor = 'bg-warning';
                                 textColor = 'text-dark';
                             }
-                            const confidenceBadge = score ? `<span class="badge ${badgeColor} ${textColor} ms-3">ML Confidence: ${score}%</span>` : '';
+                            const confidenceBadge = score ? `<span class="badge ${badgeColor} ${textColor} ms-3">ML Confidence: ${score.toFixed(2)}%</span>` : '';
 
                             cardsDiv.innerHTML += `
                                 <div class="card bg-dark border-warning mb-2 signal-card">

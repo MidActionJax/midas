@@ -1,5 +1,6 @@
 import math
 import asyncio
+import random
 from ib_insync import IB, ContFuture, util
 
 class PaperFuturesAdapter:
@@ -10,21 +11,25 @@ class PaperFuturesAdapter:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self.ib = IB()
+        self.contracts = {}
         try:
-            print("Connecting to Interactive Brokers TWS/Gateway...")
-            self.ib.connect('127.0.0.1', 7497, clientId=1)
+            client_id = random.randint(1, 99)
+            print(f"Connecting to Interactive Brokers TWS/Gateway with Client ID: {client_id}...")
+            
+            self.ib.connect('127.0.0.1', 7497, clientId=client_id)
             print("Successfully connected to IB.")
 
             # Tell IB to use the free delayed data feed
             self.ib.reqMarketDataType(3)
 
-            # Define the S&P 500 E-mini continuous futures contract
-            self.contract = ContFuture('MES', 'CME')
+            # Define the S&P 500 E-mini and Nasdaq 100 E-mini continuous futures contracts
+            self.contracts['MES'] = ContFuture('MES', 'CME')
+            self.contracts['MNQ'] = ContFuture('MNQ', 'CME')
             
-            # Qualify the contract to make sure it's recognized by IB
-            print("Qualifying contract...")
-            self.ib.qualifyContracts(self.contract)
-            print("Contract qualified.")
+            # Qualify the contracts to make sure they're recognized by IB
+            print("Qualifying contracts...")
+            self.ib.qualifyContracts(*self.contracts.values())
+            print("Contracts qualified.")
 
         except Exception as e:
             print(f"Error connecting to IB or qualifying contract: {e}")
@@ -39,7 +44,6 @@ class PaperFuturesAdapter:
     def get_current_price(self, symbol):
         """
         Fetches the last traded price for the qualified contract.
-        Note: The 'symbol' parameter is for interface consistency but the contract is fixed.
         """
         try:
             asyncio.get_event_loop()
@@ -49,40 +53,24 @@ class PaperFuturesAdapter:
             print("Not connected to IB.")
             return None
         
+        if symbol not in self.contracts:
+            print(f"Contract for symbol {symbol} not found.")
+            return None
+
         try:
-            ticker = self.ib.reqMktData(self.contract, '', False, False)
+            contract = self.contracts[symbol]
+            ticker = self.ib.reqMktData(contract, '', False, False)
             self.ib.sleep(1) 
 
             if ticker and (ticker.last or ticker.close):
                 return ticker.last if not math.isnan(ticker.last) else ticker.close
             else:
-                print("Could not retrieve price data.")
+                print(f"Could not retrieve price data for {symbol}.")
                 return None
         except Exception as e:
-            print(f"Error fetching price data: {e}")
+            print(f"Error fetching price data for {symbol}: {e}")
             return None
 
-    # def get_market_depth(self, symbol):
-    #     """
-    #     Fetches Level 2 market depth and normalizes it.
-    #     """
-    #     if not self.ib or not self.ib.isConnected():
-    #         print("Not connected to IB.")
-    #         return None
-
-    #     try:
-    #         ticker = self.ib.reqMktDepth(self.contract, numRows=5, isSmartDepth=False)
-    #         self.ib.sleep(1)
-
-    #         bids = [{'price': b.price, 'size': b.size} for b in ticker.domBids]
-    #         asks = [{'price': a.price, 'size': a.size} for a in ticker.domAsks]
-            
-    #         self.ib.cancelMktDepth(self.contract)
-    #         return {'bids': bids, 'asks': asks}
-
-    #     except Exception as e:
-    #         print(f"Error fetching market depth: {e}")
-    #         return None
     def get_market_depth(self, symbol):
         """
         Fetches Level 2 market depth.
@@ -137,22 +125,29 @@ if __name__ == '__main__':
         print("\nPaperFuturesAdapter initialized successfully.")
         
         # Test fetching market depth
-        depth = adapter.get_market_depth('ES')
+        depth = adapter.get_market_depth('MES')
         if depth:
-            print(f"\nMarket Depth for ES:\nBids: {depth['bids']}\nAsks: {depth['asks']}")
+            print(f"\nMarket Depth for MES:\nBids: {depth['bids']}\nAsks: {depth['asks']}")
         else:
-            print("\nFailed to get market depth for ES.")
+            print("\nFailed to get market depth for MES.")
 
         # Test fetching the current price
-        price = adapter.get_current_price('ES')
+        price = adapter.get_current_price('MES')
         if price:
-            print(f"\nCurrent price for ES: {price}")
+            print(f"\nCurrent price for MES: {price}")
         else:
-            print("\nFailed to get current price for ES.")
+            print("\nFailed to get current price for MES.")
+            
+        # Test fetching the current price
+        price_mnq = adapter.get_current_price('MNQ')
+        if price_mnq:
+            print(f"\nCurrent price for MNQ: {price_mnq}")
+        else:
+            print("\nFailed to get current price for MNQ.")
 
         # Test simulated trades
-        adapter.execute_buy('ES', 1)
-        adapter.execute_sell('ES', 1)
+        adapter.execute_buy('MES', 1, price)
+        adapter.execute_sell('MES', 1)
 
     else:
         print("\nPaperFuturesAdapter failed to initialize.")
