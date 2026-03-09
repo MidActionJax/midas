@@ -56,16 +56,16 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 6: The ML Co-Pilot (CURRENT)
+## 🟢 Sprint 6: The ML Co-Pilot
 **Goal:** Merge the trained ML model with the live trading engine.
-- [ ] **Model Inference:** Load the trained ML model into `core/logic.py`.
-- [ ] **The Confidence Score:** Whenever an Iceberg is detected, feed current market conditions into the ML model to get a "Probability of Success" score.
-- [ ] **UI Update:** Add the `ML Confidence: 85%` badge to the Approval Cards on the dashboard.
-- [ ] **Auto-Rejection:** Hardcode the engine to silently discard any signal with an ML Confidence below 60%.
+- [x] **Model Inference:** Load the trained ML model into `core/logic.py`.
+- [x] **The Confidence Score:** Whenever an Iceberg is detected, feed current market conditions into the ML model to get a "Probability of Success" score.
+- [x] **UI Update:** Add the `ML Confidence: 85%` badge to the Approval Cards on the dashboard.
+- [x] **Auto-Rejection:** Hardcode the engine to silently discard any signal with an ML Confidence below 60%.
 
 ---
 
-## ⚪ Sprint 7: Deployment & Hardening
+## 🟡 Sprint 7: Deployment & Hardening (CURRENT)
 **Goal:** Move the bot off the local laptop and into a secure, 24/7 cloud environment.
 - [ ] **Cloud Hosting:** Deploy the system to a Linux VPS (DigitalOcean/AWS/Google Cloud).
 - [ ] **Web Server Config:** Replace the Flask dev server with Gunicorn and Nginx.
