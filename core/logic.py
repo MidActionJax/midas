@@ -9,6 +9,11 @@ except ImportError:
 
 from core.logger import log_signal
 from config import TRADING_SYMBOL
+from core.midas_model import MidasBrain
+
+# Initialize the MidasBrain globally
+brain = MidasBrain()
+MIN_CONFIDENCE_THRESHOLD = 60
 
 
 def get_market_session():
@@ -217,22 +222,51 @@ def analyze_order_book(order_book, price_history, threshold=0.5):
     if (current_price > ema_val and signal['type'] == 'BUY_SIGNAL') or \
        (current_price < ema_val and signal['type'] == 'SELL_SIGNAL'):
         
+        # --- ML Confidence Score ---
+        session_str = get_market_session()
+        
+        # 1. Scale whale strength (e.g., a ratio of 3.0 is very strong)
+        raw_whale_strength = calculate_whale_strength(signal['size'], order_book)
+        scaled_whale_strength = min(raw_whale_strength / 5.0, 1.0) * 100
+
+        # 2. Map session string to a numerical score
+        session_map = {"London/NY Overlap": 100, "New York Open": 95, "Other": 70, "Unknown": 50}
+        session_score = session_map.get(session_str, 60)
+
+        # 3. Create features for the brain
+        ml_features = {
+            'whale_strength': scaled_whale_strength,
+            'trend_alignment': 100,  # 100% because it's already filtered for trend
+            'session_volume': session_score
+        }
+        
+        confidence_score = brain.get_confidence_score(ml_features)
+        signal['confidence_score'] = confidence_score
+        
+        # --- Logging & Return ---
         signal_data = {
             'symbol': TRADING_SYMBOL,
             'type': signal['type'],
             'price': signal['price'],
             'size': signal['size'],
-            'timestamp': signal['timestamp']
+            'timestamp': signal['timestamp'],
+            'confidence': confidence_score # Pass to logger
         }
         context_data = {
             'ema_200': ema_val,
             'trend': trend_dir,
             'atr': atr_volatility,
-            'session_context': get_market_session(),
-            'whale_strength': calculate_whale_strength(signal['size'], order_book)
+            'session_context': session_str,
+            'whale_strength': raw_whale_strength
         }
         
-        # As requested, log just before returning the signal
+        # --- Auto-Veto Discipline ---
+        if confidence_score < MIN_CONFIDENCE_THRESHOLD:
+            print(f"--- VETO: Signal confidence {confidence_score}% too low. Discarding. ---")
+            log_signal(signal_data, context_data, 'AUTO_REJECTED')
+            return None # Discard the signal
+
+        # If confidence is high enough, log as pending and send to UI
         log_signal(signal_data, context_data, 'PENDING')
         
         return signal 
