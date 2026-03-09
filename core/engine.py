@@ -35,18 +35,12 @@ class MidasEngine(threading.Thread):
                 if reason:
                     print(f"!!! {reason} TRIGGERED: PnL = {unrealized_pnl:.2f} !!!")
                     if self.adapter.execute_sell(position['symbol'], position['size']):
-                        state.state_manager.add_pnl(unrealized_pnl)
-                        
-                        log_data = {
-                            'symbol': position['symbol'],
-                            'action': 'SELL',
-                            'size': position['size'],
-                            'price': current_price,
-                            'pnl': unrealized_pnl,
-                            'reason': reason
-                        }
-                        logger.log_trade(log_data)
-                        
+                        # The "Truth Engine" Logger: Log the final outcome of the trade
+                        if 'signal_timestamp' in position:
+                            logger.update_outcome(position['signal_timestamp'], unrealized_pnl)
+                        else:
+                            print("Warning: 'signal_timestamp' not found in position, cannot log outcome.")
+
                         positions_to_remove.append(position)
                         self.last_trade_time = time.time()
                     else:

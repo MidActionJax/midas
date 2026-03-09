@@ -1,25 +1,161 @@
 import csv
 import os
-from datetime import datetime
+import shutil
+from tempfile import NamedTemporaryFile
+import time
 
-TRADE_HISTORY_FILE = 'trade_history.csv'
-HEADERS = ['timestamp', 'symbol', 'action', 'size', 'price', 'pnl', 'reason']
+# Define the absolute path for the CSV file to ensure it's created in the project root
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+CSV_FILE = os.path.join(PROJECT_ROOT, 'trade_history.csv')
 
-def log_trade(trade_data: dict):
+CSV_HEADER = [
+    'timestamp_id', 'symbol', 'type', 'price', 'size',
+    'ema_200_val', 'trend_dir', 'atr_volatility', 'session_context', 'whale_strength',
+    'user_decision', 'final_pnl', 'outcome_label'
+]
+
+def log_signal(signal_data, context_data, status):
     """
-    Appends a trade record to the trade history CSV file.
-
-    Args:
-        trade_data (dict): A dictionary containing the trade details.
-                           Must include keys from the HEADERS list.
+    Logs the trading signal data, context, and status to a CSV file.
+    It now uses the timestamp from the signal_data.
     """
-    file_exists = os.path.isfile(TRADE_HISTORY_FILE)
+    file_exists = os.path.isfile(CSV_FILE)
 
-    with open(TRADE_HISTORY_FILE, 'a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=HEADERS)
+    # Use timestamp from the signal data, ensuring consistency.
+    timestamp_id = signal_data.get('timestamp')
+    if timestamp_id is None:
+        timestamp_id = round(time.time(), 4) # Fallback, though should always be provided.
 
-        if not file_exists:
-            writer.writeheader()
+    row_data = {
+        'timestamp_id': timestamp_id,
+        'symbol': signal_data.get('symbol'),
+        'type': signal_data.get('type'),
+        'price': signal_data.get('price'),
+        'size': signal_data.get('size'),
+        'ema_200_val': context_data.get('ema_200'),
+        'trend_dir': context_data.get('trend'),
+        'atr_volatility': context_data.get('atr'),
+        'session_context': context_data.get('session_context'),
+        'whale_strength': context_data.get('whale_strength'),
+        'user_decision': status,
+        'final_pnl': '',
+        'outcome_label': ''
+    }
 
-        trade_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        writer.writerow(trade_data)
+    try:
+        with open(CSV_FILE, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADER)
+            if not file_exists or os.path.getsize(CSV_FILE) == 0:
+                writer.writeheader()
+            writer.writerow(row_data)
+    except IOError as e:
+        print(f"Error writing to CSV file {CSV_FILE}: {e}")
+
+def update_user_decision(timestamp_id, decision):
+    """
+    Finds a signal by its timestamp_id in the CSV and updates the user_decision.
+    Includes a retry loop to handle potential race conditions with file writing.
+    """
+    if not os.path.isfile(CSV_FILE):
+        print(f"Error: CSV file not found at {CSV_FILE}")
+        return
+
+    for attempt in range(3):
+        found = False
+        tempfile = NamedTemporaryFile(mode='w', delete=False, newline='', encoding='utf-8')
+        try:
+            with open(CSV_FILE, 'r', newline='', encoding='utf-8') as csvfile, tempfile:
+                reader = csv.DictReader(csvfile)
+                writer = csv.DictWriter(tempfile, fieldnames=CSV_HEADER)
+                writer.writeheader()
+                
+                for row in reader:
+                    # 1. Use .get() to avoid KeyError if the column is named wrong
+                    csv_id = row.get('timestamp_id') or row.get('timestamp')
+                    
+                    if csv_id:
+                        try:
+                            # 2. Force both to strings of the same precision for a perfect match
+                            if str(round(float(csv_id), 4)) == str(round(float(timestamp_id), 4)):
+                                row['user_decision'] = decision.upper()
+                                found = True
+                                print(f"--- MATCH FOUND: {csv_id} updated to {decision} ---")
+                        except ValueError:
+                            pass # Skip rows with non-numeric IDs
+                    
+                    # 3. Clean the row before writing (strips out 'action', 'reason', etc.)
+                    filtered_row = {k: v for k, v in row.items() if k in CSV_HEADER}
+                    writer.writerow(filtered_row)
+            
+            if found:
+                shutil.move(tempfile.name, CSV_FILE)
+                return  # Successfully updated, exit function
+
+        except FileNotFoundError:
+             # This can happen if the file is created between the os.path.isfile check and the open() call
+            print(f"Attempt {attempt + 1}: CSV file not found, retrying...")
+        except Exception as e:
+            print(f"An error occurred during CSV update on attempt {attempt + 1}: {e}")
+        finally:
+            # Ensure tempfile is always removed if it still exists
+            if os.path.exists(tempfile.name):
+                os.remove(tempfile.name)
+
+        if found:
+            return # Should have already exited, but as a safeguard
+
+        # If not found, wait before retrying
+        time.sleep(0.1)
+
+    # This message is now printed only after all retries have failed
+    print(f"Warning: Signal with timestamp_id {timestamp_id} not found for update after multiple attempts.")
+
+def update_outcome(timestamp_id, pnl):
+    """
+    Finds a signal by its timestamp_id and updates the trade outcome.
+    Includes a retry loop to handle potential race conditions with file writing.
+    """
+    if not os.path.isfile(CSV_FILE):
+        print(f"Error: CSV file not found at {CSV_FILE}")
+        return
+
+    for attempt in range(3):
+        found = False
+        tempfile = NamedTemporaryFile(mode='w', delete=False, newline='', encoding='utf-8')
+        try:
+            with open(CSV_FILE, 'r', newline='', encoding='utf-8') as csvfile, tempfile:
+                reader = csv.DictReader(csvfile)
+                writer = csv.DictWriter(tempfile, fieldnames=CSV_HEADER)
+                writer.writeheader()
+
+                for row in reader:
+                    print(f"DEBUG: Checking CSV ID {row['timestamp_id']} against target {timestamp_id}")
+                    try:
+                        if str(round(float(row['timestamp_id']), 4)) == str(round(float(timestamp_id), 4)):
+                            row['final_pnl'] = pnl
+                            row['outcome_label'] = 1 if pnl > 0 else 0
+                            found = True
+                    except (ValueError, KeyError):
+                        pass
+                    
+                    filtered_row = {k: v for k, v in row.items() if k in CSV_HEADER}
+                    writer.writerow(filtered_row)
+            
+            if found:
+                shutil.move(tempfile.name, CSV_FILE)
+                return # Successfully updated, exit function
+
+        except FileNotFoundError:
+            print(f"Attempt {attempt + 1}: CSV file not found, retrying...")
+        except Exception as e:
+            print(f"An error occurred during CSV outcome update on attempt {attempt + 1}: {e}")
+        finally:
+            if os.path.exists(tempfile.name):
+                os.remove(tempfile.name)
+        
+        if found:
+            return
+
+        time.sleep(0.1)
+
+    print(f"Warning: Signal with timestamp_id {timestamp_id} not found for outcome update after multiple attempts.")
