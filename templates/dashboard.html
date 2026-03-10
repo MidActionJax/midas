@@ -22,8 +22,9 @@
 
         <div class="d-flex justify-content-center align-items-center my-4 gap-2">
             <select id="mode-selector" class="form-select bg-dark text-light border-secondary w-auto">
-                <option value="PAPER_CRYPTO">Paper: Crypto (BTC)</option>
+                <option value="NT_FUTURES">Live: NinjaTrader (Futures)</option>
                 <option value="PAPER_FUTURES">Paper: Futures (S&P 500)</option>
+                <option value="PAPER_CRYPTO">Paper: Crypto (BTC)</option>
             </select>
             <a id="start-button" href="/start_bot" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
@@ -147,7 +148,7 @@
 
                     // 1. Basic Status
                     document.getElementById('symbol').textContent = data.symbol;
-                    if (data.symbol === 'MES') {
+                    if (data.symbol === 'MES' || data.symbol === 'MNQ') {
                         nasdaqStatusContainer.style.display = 'inline';
                         nasdaqEmaContainer.style.display = 'inline';
                     } else {

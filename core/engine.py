@@ -3,6 +3,7 @@ import time
 import config
 from adapters.paper_crypto import PaperCryptoAdapter
 from adapters.paper_futures import PaperFuturesAdapter
+from adapters.nt_futures import NTFuturesAdapter # Add this line
 from core import state, logic, logger
 
 class MidasEngine(threading.Thread):
@@ -28,12 +29,13 @@ class MidasEngine(threading.Thread):
                 break
 
             if self.adapter is None:
-                # This part now assumes one adapter type can handle all symbols
-                if config.TRADING_MODE == 'PAPER_FUTURES':
+                if config.TRADING_MODE == 'NT_FUTURES':
+                    print("Initializing NTFuturesAdapter...")
+                    self.adapter = NTFuturesAdapter(port=config.NT_PORT)
+                elif config.TRADING_MODE == 'PAPER_FUTURES':
                     print("Initializing PaperFuturesAdapter...")
                     self.adapter = PaperFuturesAdapter()
                 elif config.TRADING_MODE == 'PAPER_CRYPTO':
-                    # You would expand this for multi-symbol crypto too
                     print("Initializing PaperCryptoAdapter...")
                     self.adapter = PaperCryptoAdapter()
 
@@ -91,11 +93,12 @@ def start_engine():
     
     if engine_thread is None or not engine_thread.is_alive():
         symbols_to_trade = []
-        if config.TRADING_MODE == 'PAPER_FUTURES':
+        # UPDATE THIS LINE to include NT_FUTURES
+        if config.TRADING_MODE in ['PAPER_FUTURES', 'NT_FUTURES']: 
             symbols_to_trade = ['MES', 'MNQ']
-            config.TRADING_SYMBOL = 'MES' # Ensure primary symbol is set
-        else: # PAPER_CRYPTO
-            symbols_to_trade = ['BTC/USDT'] # Example for crypto
+            config.TRADING_SYMBOL = 'MES'
+        else: # PAPER_CRYPTO or LIVE_CRYPTO
+            symbols_to_trade = ['BTC/USDT']
             config.TRADING_SYMBOL = 'BTC/USDT'
 
         print(f"Engine starting in mode: {config.TRADING_MODE} for {symbols_to_trade}")
