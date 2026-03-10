@@ -190,8 +190,8 @@ def analyze_order_book(symbol, order_book, price_history_map, threshold=0.5):
     current_price_mes = price_history_mes[-1]
     current_price_mnq = price_history_mnq[-1]
     
-    ema_mes = calculate_ema(price_history_mes, period=200)
-    ema_mnq = calculate_ema(price_history_mnq, period=200)
+    ema_mes = calculate_ema(price_history_mes, period=200) #CHANGE
+    ema_mnq = calculate_ema(price_history_mnq, period=200) #CHANGE
 
     from core.state import state_manager
     state_manager.ema_val['MES'] = ema_mes

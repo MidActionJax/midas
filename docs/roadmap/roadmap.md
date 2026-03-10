@@ -76,7 +76,8 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ## 🟡 Sprint 8: Machine Learning & Historical Intelligence (CURRENT)
 **Goal:** Transition from a rule-based script to a predictive "Truth Engine" by training on historical data.
-- [ ] **Historical Data Scraper**: Build a utility to download 1 year of 1-minute historical candlestick data for MES and MNQ directly from the IBKR API.
+- [ ] **Historical Data Export**: Use NT8's native Historical Data tool to export 1 year of 1-minute candlestick data for MES and MNQ to CSV files.
+- [ ] **Data Parser Utility**: Build a Python script to clean and merge the NT8 CSV exports into a format the ML model can understand.
 - [ ] **Signal Classifier (ML Filter)**: Use scikit-learn to train a model that assigns a "Success Probability" to every signal based on time, volatility, and Nasdaq correlation.
 - [ ] **Backtesting "Time Machine"**: Create a simulation script to run the Midas Logic against historical data to verify PnL before risking real capital.
 - [ ] **Intelligence Integration**: Update logic.py to allow the ML model to "Veto" any trade where the historical success probability is below 60%.
@@ -85,11 +86,12 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ## 🟣 Sprint 9: Real-Time Sync & Live Controls
 **Goal**: Connect the dashboard to your actual financial data and enable "One-Click" mode switching.
-- [ ] **Live Balance & PnL Sync**: Update paper_futures.py to pull your actual Net Liquidation Value and 24-hour PnL directly from your Interactive Brokers account.
-- [ ] **The "Master Switch"**: Add a toggle on the dashboard to switch between "Paper" and "Live" modes without manually editing config.py.
+- [ ] **Live Balance & PnL Sync**: Expand the C# MidasBridge to push your actual NinjaTrader account balance and daily PnL across the socket to the Python adapter.
+- [ ] **The "Master Switch"**: Add a toggle on the dashboard to seamlessly switch between "Paper" and "Live" (NT_FUTURES) modes without manually editing backend config files.
 - [ ] **Performance Audit HUD**: Add a visual "Daily Scorecard" specifically tracking wins, losses, and profit for the current 24-hour window.
 - [ ] **Execution Logger**: Expand the dashboard to show the last 10 trades with specific details on why they were closed (e.g., Hit Take Profit vs. Stop Loss).
-- [ ] **Account-Aware Position Sizing**: Logic that checks your actual IBKR balance. If you have $50, it strictly buys 1 contract; as your balance grows, it scales up automatically.
+- [ ] **Account-Aware Position Sizing**: Logic that checks your actual NinjaTrader balance. If you have $50, it strictly buys 1 contract; as your balance grows, it scales up automatically.
+- [] **Hybrid Position Sizing**: Add a UI toggle on the dashboard to switch between "Fixed" (manually locking trade size to 1, 2, etc. contracts) and "Auto" (the engine dynamically scales contract size up or down based on your live NinjaTrader margin balance).
 
 ---
 

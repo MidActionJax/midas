@@ -162,7 +162,10 @@ def switch_mode():
     data = request.get_json()
     new_mode = data.get('mode')
     
-    if new_mode == 'PAPER_FUTURES':
+    if new_mode == 'NT_FUTURES':
+        config.TRADING_MODE = 'NT_FUTURES'
+        config.TRADING_SYMBOL = 'MES'
+    elif new_mode == 'PAPER_FUTURES':
         config.TRADING_MODE = 'PAPER_FUTURES'
         config.TRADING_SYMBOL = 'MES'
     else:
