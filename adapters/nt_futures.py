@@ -11,6 +11,15 @@ class NTFuturesAdapter:
         self.port = port
         self.contracts = {}
         
+        # --- State for Indicator Calculations ---
+        self.price_history = {'MES': [], 'MNQ': []}
+        self.last_bar_time = {'MES': None, 'MNQ': None}
+        self.current_features = {
+            'atr_mes': 0.0, 'atr_mnq': 0.0, 
+            'above_ema': False, 'in_sync': False
+        }
+        self.last_price = {'MES': None, 'MNQ': None}
+
         try:
             print(f"Connecting to NinjaTrader 8 MidasBridge on port {self.port}...")
             
@@ -46,23 +55,21 @@ class NTFuturesAdapter:
             print(f"Contract for symbol {symbol} not found.")
             return None
 
-        # --- THE FIX: Decide which door to knock on based on the symbol ---
         target_port = 36999 if symbol == 'MES' else 37000
 
         try:
-            # Create a socket connection to get the real-time tick from the bridge
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(1)
-                
-                # --- THE FIX: Use target_port here instead of self.port! ---
                 s.connect((self.host, target_port))
-                
-                # Send a request for the specific symbol (MES or MNQ)
                 s.sendall(f"GET_PRICE|{symbol}".encode())
                 data = s.recv(1024).decode()
                 
                 if data:
-                    return float(data)
+                    price = float(data)
+                    # --- THE FIX: Update your sensors before returning the price ---
+                    self.update_indicators(symbol, price)
+                    return price
+                    
             return None
         except Exception as e:
             print(f"❌ Socket Error ({symbol} on port {target_port}): {e}") 
@@ -90,6 +97,44 @@ class NTFuturesAdapter:
             asks[1][1] = round(random.uniform(20, 50), 2)
 
         return {'bids': bids, 'asks': asks}
+    
+    def update_indicators(self, symbol, price):
+        """Calculates the 4 Keys required for the Sprint 8 ML Brain."""
+        import time
+        minute_timestamp = int(time.time() / 60)
+        
+        if self.last_bar_time[symbol] != minute_timestamp:
+            self.price_history[symbol].append(price)
+            if len(self.price_history[symbol]) > 200:
+                self.price_history[symbol].pop(0)
+            
+            # 1. Calculate ATR (Last 14 mins)
+            if len(self.price_history[symbol]) >= 14:
+                changes = [abs(self.price_history[symbol][i] - self.price_history[symbol][i-1]) for i in range(1, len(self.price_history[symbol]))]
+                atr = sum(changes[-14:]) / 14
+                if symbol == 'MES': self.current_features['atr_mes'] = atr
+                else: self.current_features['atr_mnq'] = atr
+
+            # 2. Calculate EMA 200 for MES (The "Smarter" Trend Key)
+            if symbol == 'MES' and len(self.price_history['MES']) >= 200:
+                # If this is our first time hitting 200 bars, start with a simple average
+                if self.current_features.get('ema_200_val') is None:
+                    self.current_features['ema_200_val'] = sum(self.price_history['MES']) / 200
+                else:
+                    # Apply the EMA smoothing formula
+                    smoothing = 2 / (200 + 1)
+                    current_ema = (price * smoothing) + (self.current_features['ema_200_val'] * (1 - smoothing))
+                    self.current_features['ema_200_val'] = current_ema
+                
+                self.current_features['above_ema'] = price > self.current_features['ema_200_val']
+                
+            # 3. Correlation Check
+            if len(self.price_history['MES']) > 5 and len(self.price_history['MNQ']) > 5:
+                mes_dir = self.price_history['MES'][-1] > self.price_history['MES'][-5]
+                mnq_dir = self.price_history['MNQ'][-1] > self.price_history['MNQ'][-5]
+                self.current_features['in_sync'] = (mes_dir == mnq_dir)
+
+            self.last_bar_time[symbol] = minute_timestamp
 
     def execute_buy(self, symbol, size, price):
         """
