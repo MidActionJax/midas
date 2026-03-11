@@ -74,18 +74,18 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 8: Machine Learning & Historical Intelligence (CURRENT)
+## 🟢 Sprint 8: Machine Learning & Historical Intelligence
 **Goal:** Transition from a rule-based script to a predictive "Truth Engine" by training on historical data.
-- [ ] **Historical Data Export**: Use NT8's native Historical Data tool to export 1 year of 1-minute candlestick data for MES and MNQ to CSV files.
-- [ ] **Data Parser Utility**: Build a Python script to clean and merge the NT8 CSV exports into a format the ML model can understand.
-- [ ] **Signal Classifier (ML Filter)**: Use scikit-learn to train a model that assigns a "Success Probability" to every signal based on time, volatility, and Nasdaq correlation.
-- [ ] **Backtesting "Time Machine"**: Create a simulation script to run the Midas Logic against historical data to verify PnL before risking real capital.
-- [ ] **Intelligence Integration**: Update logic.py to allow the ML model to "Veto" any trade where the historical success probability is below 60%.
-- [ ] **The 4th Key (Volatility Filter)**: Update logic.py to calculate a "Volatility Zone" using ATR. If ATR is < 2.0 (Dead) or > 15.0 (Chaos), the signal is automatically vetoed.
+- [x] **Historical Data Export**: Use NT8's native Historical Data tool to export 1 year of 1-minute candlestick data for MES and MNQ to CSV files.
+- [x] **Data Parser Utility**: Build a Python script to clean and merge the NT8 CSV exports into a format the ML model can understand.
+- [x] **Signal Classifier (ML Filter)**: Use scikit-learn to train a model that assigns a "Success Probability" to every signal based on time, volatility, and Nasdaq correlation.
+- [x] **Backtesting "Time Machine"**: Create a simulation script to run the Midas Logic against historical data to verify PnL before risking real capital.
+- [x] **Intelligence Integration**: Update logic.py to allow the ML model to "Veto" any trade where the historical success probability is below 60%.
+- [x] **The 4th Key (Volatility Filter)**: Update logic.py to calculate a "Volatility Zone" using ATR. If ATR is < 2.0 (Dead) or > 15.0 (Chaos), the signal is automatically vetoed.
 
 ---
 
-## 🟣 Sprint 9: Real-Time Sync & Live Controls
+## 🟡 Sprint 9: Real-Time Sync & Live Controls (CURRENT)
 **Goal**: Connect the dashboard to your actual financial data and enable "One-Click" mode switching.
 - [ ] **Live Balance & PnL Sync**: Expand the C# MidasBridge to push your actual NinjaTrader account balance and daily PnL across the socket to the Python adapter.
 - [ ] **The "Master Switch"**: Add a toggle on the dashboard to seamlessly switch between "Paper" and "Live" (NT_FUTURES) modes without manually editing backend config files.
@@ -161,3 +161,7 @@ The Tape Scanner: We add a small Python script that looks for "rhythmic" prints 
 The Labeler: When the rhythm is detected, the bot flags it: "Institutional Pattern Detected: Type Rhythmic-50."
 
 The Intelligence: We feed that flag into the Truth Engine. The ML model will then learn: "Whenever Rhythmic-50 is buying and we are above the 200 EMA, the trade has a 92% success rate".
+
+---
+## Backlog!!
+- 3 months of data
