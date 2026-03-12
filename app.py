@@ -151,6 +151,13 @@ def status():
         'realized_pnl': state.state_manager.get_realized_pnl(),
         'open_positions': len(state.state_manager.get_active_positions()),
         'kill_switch_active': state.state_manager.is_kill_switch_active,
+        
+        # Get full whale patterns for the frontend
+        'active_whales': [
+            whale for whale in state.state_manager.get_detected_whales() 
+            if whale.get('whale_id') in state.state_manager.get_active_dominant_whales()
+        ],
+        
         'nasdaq_status': 'UNKNOWN',
         'nasdaq_ema': None,
         'performance': performance_stats,
@@ -161,7 +168,8 @@ def status():
         # Master Switch & Log
         'master_trading_mode': master_mode,
         'sizing_mode': sizing_mode,
-        'execution_log': execution_log
+        'execution_log': execution_log,
+        'dev_mode': state.state_manager.dev_mode
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
@@ -241,6 +249,13 @@ def set_sizing_mode():
         return jsonify({'status': 'success', 'sizing_mode': new_mode})
     return jsonify({'status': 'error', 'message': 'Invalid sizing mode'}), 400
 
+@app.route('/toggle_dev', methods=['POST'])
+@login_required
+def toggle_dev():
+    """Toggles the developer mode."""
+    new_mode = state.state_manager.toggle_dev_mode()
+    return jsonify({'status': 'success', 'dev_mode': new_mode})
+
 @app.route('/approve_signal/<float:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):
@@ -266,20 +281,21 @@ def approve_signal(signal_id):
 
         adapter = core.engine.engine_thread.adapter
         trade_executed = False
+        
+        # Surgical Fix: Use your new dynamic sizing logic
+        from core.logic import calculate_position_size
+        
+        balance = adapter.get_wallet_balance()
+        price = adapter.get_current_price(config.TRADING_SYMBOL)
+        
+        dynamic_size = calculate_position_size(
+            balance, 
+            price, 
+            state.state_manager.price_history
+        )
+
         if signal_to_execute['type'] == 'BUY_SIGNAL':
-            # Surgical Fix: Use your new dynamic sizing logic
-            from core.logic import calculate_position_size
-            
-            balance = adapter.get_wallet_balance()
-            price = adapter.get_current_price(config.TRADING_SYMBOL)
-            
-            dynamic_size = calculate_position_size(
-                balance, 
-                price, 
-                state.state_manager.price_history
-            )
-            
-            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, price)
+            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, price, signal_id=signal_id)
             
             if trade_executed:
                 entry_price = price
@@ -287,13 +303,26 @@ def approve_signal(signal_id):
                     'symbol': config.TRADING_SYMBOL,
                     'entry_price': entry_price,
                     'size': dynamic_size,
+                    'type': 'LONG', # Explicitly set type for side
                     'timestamp': time.time(),
                     'signal_timestamp': signal_id # Link position to the original signal
                 }
                 state.state_manager.add_position(position)
 
         elif signal_to_execute['type'] == 'SELL_SIGNAL':
-            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, price)
+            trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, signal_id=signal_id)
+            
+            if trade_executed:
+                entry_price = price # Or get it from sell execution if different
+                position = {
+                    'symbol': config.TRADING_SYMBOL,
+                    'entry_price': entry_price,
+                    'size': dynamic_size,
+                    'type': 'SHORT', # Explicitly set type for side
+                    'timestamp': time.time(),
+                    'signal_timestamp': signal_id
+                }
+                state.state_manager.add_position(position)
 
         if trade_executed:
             state.state_manager.remove_pending_signal(signal_to_execute)

@@ -11,7 +11,7 @@ CSV_FILE = os.path.join(PROJECT_ROOT, 'trade_history.csv')
 CSV_HEADER = [
     'timestamp_id', 'symbol', 'type', 'price', 'size',
     'ema_200_val', 'trend_dir', 'atr_volatility', 'session_context', 'whale_strength',
-    'ml_confidence', 'user_decision', 'final_pnl', 'outcome_label', 'exit_reason'
+    'ml_confidence', 'Whale_ID', 'user_decision', 'final_pnl', 'outcome_label', 'exit_reason'
 ]
 
 def log_signal(signal_data, context_data, status):
@@ -38,6 +38,7 @@ def log_signal(signal_data, context_data, status):
         'session_context': context_data.get('session_context'),
         'whale_strength': context_data.get('whale_strength'),
         'ml_confidence': signal_data.get('confidence'),
+        'Whale_ID': signal_data.get('whale_id', ''),
         'user_decision': status,
         'final_pnl': '',
         'outcome_label': '',

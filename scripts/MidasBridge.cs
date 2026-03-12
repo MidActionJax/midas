@@ -8,6 +8,7 @@ using NinjaTrader.NinjaScript;
 using System.Threading;
 using System.Linq;
 using NinjaTrader.Cbi;
+using NinjaTrader.Data;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
@@ -42,7 +43,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Find the specific Demo account from your screenshot
                 account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174");
 
-                if (account != null) Print("FOUND ACCOUNT: " + account.Name);
+                if (account != null) 
+                {
+                    Print("FOUND ACCOUNT: " + account.Name);
+                    account.ExecutionUpdate += OnExecutionUpdate;
+                }
 
                 if (account == null)
                 {
@@ -61,6 +66,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Terminated)
             {
+                if (account != null) account.ExecutionUpdate -= OnExecutionUpdate;
                 isRunning = false;
                 server?.Stop();
                 accountUpdateTimer?.Dispose();
@@ -147,10 +153,82 @@ namespace NinjaTrader.NinjaScript.Indicators
                             byte[] response = Encoding.UTF8.GetBytes(priceString);
                             stream.Write(response, 0, response.Length);
                         }
+                        else if (request.Contains("PLACE_ORDER"))
+                        {
+                            Print("PLACE_ORDER command received: " + request);
+                            string[] parts = request.Split('|');
+                            if (parts.Length == 4)
+                            {
+                                string side = parts[1];
+                                string symbol = parts[2];
+                                int quantity = int.Parse(parts[3]);
+
+                                if (account != null && symbol == Instrument.MasterInstrument.Name)
+                                {
+                                    OrderAction action = side == "BUY" ? OrderAction.Buy : OrderAction.Sell;
+                                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                                    {
+                                       Order myOrder = account.CreateOrder(Instrument, action, OrderType.Market, TimeInForce.Day, quantity, 0, 0, string.Empty, "MidasOrder", null);
+                                       account.Submit(new[] { myOrder });
+                                    });
+                                    Print($"Submitted {side} order for {quantity} {symbol}");
+                                }
+                                else
+                                {
+                                    Print("Order not placed. Account is null or symbol mismatch.");
+                                }
+                            }
+                        }
                         client.Close();
                     }
                 }
-                catch { /* Ignore */ }
+                catch (Exception e) { Print("ListenForPython Error: " + e.Message); }
+            }
+        }
+
+        private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
+        {
+            // Ensure we are only sending updates for the Midas account and it's a fill
+            if (e.Execution.Order.Account == account && e.Execution.Order.OrderState == OrderState.Filled)
+            {
+                string side = e.Execution.Order.OrderAction == OrderAction.Buy ? "BUY" : "SELL";
+                string json = "{" +
+                    "\"LABEL\":\"ORDER_FILL\"," +
+                    "\"SYMBOL\":\"" + e.Execution.Instrument.MasterInstrument.Name + "\"," +
+                    "\"QUANTITY\":" + e.Execution.Quantity + "," +
+                    "\"PRICE\":" + e.Execution.Price + "," +
+                    "\"SIDE\":\"" + side + "\"," +
+                    "\"TIMESTAMP\":\"" + e.Execution.Time.ToString("o") + "\"" +
+                "}";
+
+                SendDataToPython(json);
+            }
+        }
+
+        protected override void OnMarketData(NinjaTrader.Data.MarketDataEventArgs marketDataUpdate)
+        {
+            // We only care about Last trades (the Tape)
+            if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Last)
+            {
+                try
+                {
+                    // Simple side detection logic
+                    string side = marketDataUpdate.Price >= GetCurrentAsk() ? "BUY" : "SELL";
+                    
+                    string json = "{" +
+                        "\"LABEL\":\"TRADE\"," +
+                        "\"SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
+                        "\"SIZE\":" + marketDataUpdate.Volume + "," +
+                        "\"PRICE\":" + marketDataUpdate.Price + "," +
+                        "\"SIDE\":\"" + side + "\"" +
+                    "}";
+
+                    SendDataToPython(json);
+                }
+                catch (Exception ex)
+                {
+                    // Print("TAPE ERROR: " + ex.Message);
+                }
             }
         }
 

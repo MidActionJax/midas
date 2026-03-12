@@ -10,9 +10,17 @@
         .signal-card { border-left: 5px solid #ffc107; }
         .table-container { max-height: 400px; overflow-y: auto; }
         .live-mode { border: 3px solid #dc3545 !important; }
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 5px #ffc107; }
+            50% { box-shadow: 0 0 20px #ffc107, 0 0 30px #ffc107; }
+        }
+        .glow {
+            animation: glow 1.5s infinite ease-in-out;
+        }
     </style>
 </head>
 <body>
+    <audio id="ping-sound" src="https://www.soundjay.com/buttons/sounds/button-16.mp3" preload="auto"></audio>
     <div class="container mt-5">
         <div id="kill-switch-alert" class="alert alert-danger text-center" role="alert" style="display: none;">
             <strong>CRITICAL: DAILY DRAWDOWN LIMIT REACHED. TRADING SUSPENDED.</strong>
@@ -58,6 +66,11 @@
             <div class="form-check form-switch fs-4">
                 <input class="form-check-input" type="checkbox" role="switch" id="sizing-mode-switch">
                 <label class="form-check-label text-light" for="sizing-mode-switch" id="sizing-mode-label">FIXED</label>
+            </div>
+            <!-- DEV Mode Switch -->
+            <div class="form-check form-switch fs-4">
+                <input class="form-check-input" type="checkbox" role="switch" id="dev-mode-switch">
+                <label class="form-check-label text-light" for="dev-mode-switch" id="dev-mode-label">DEV</label>
             </div>
             <a id="start-button" href="/start_bot" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
@@ -135,6 +148,15 @@
             </div>
         </div>
 
+        <!-- Squawk Box -->
+        <div class="card text-white bg-dark border-secondary mt-4">
+            <div class="card-header">Squawk Feed</div>
+            <div class="card-body" id="squawk-feed" style="max-height: 150px; overflow-y: auto;">
+                <p class="text-muted">Awaiting whale activity...</p>
+            </div>
+        </div>
+
+
         <!-- Execution Log -->
         <div class="card text-white bg-dark border-secondary mt-4">
             <div class="card-header">Execution Log</div>
@@ -164,6 +186,9 @@
     </div>
 
     <script>
+        // State for new features
+        let knownDominantWhales = [];
+
         // API Calls
         function approveSignal(id) { fetch(`/approve_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
         function rejectSignal(id) { fetch(`/reject_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
@@ -201,6 +226,9 @@
                     const sizingModeSwitch = document.getElementById('sizing-mode-switch');
                     const sizingModeLabel = document.getElementById('sizing-mode-label');
                     const executionLogTable = document.getElementById('execution-log-table');
+                    const squawkFeed = document.getElementById('squawk-feed');
+                    const devModeSwitch = document.getElementById('dev-mode-switch');
+                    const devModeLabel = document.getElementById('dev-mode-label');
 
 
                     // 0. Handle Kill Switch
@@ -299,6 +327,15 @@
                         sizingModeLabel.classList.remove('text-primary');
                     }
 
+                    // DEV Mode Switch
+                    devModeSwitch.checked = data.dev_mode;
+                    devModeLabel.textContent = data.dev_mode ? 'DEV ON' : 'DEV';
+                    if (data.dev_mode) {
+                        devModeLabel.classList.add('text-info');
+                    } else {
+                        devModeLabel.classList.remove('text-info');
+                    }
+
                     // Performance Scorecard
                     if (data.performance) {
                         winRateEl.textContent = data.performance.win_rate + '%';
@@ -375,6 +412,38 @@
                             `;
                         });
                     }
+
+                    // 6. Squawk Box & Whale Logic
+                    let isAligned = false;
+                    nasdaqStatus.classList.remove('glow'); // Reset glow
+
+                    if (data.active_whales && data.active_whales.length > 0) {
+                        data.active_whales.forEach(whale => {
+                            // Audio Alert and Squawk Feed
+                            if (!knownDominantWhales.includes(whale.whale_id)) {
+                                knownDominantWhales.push(whale.whale_id);
+                                document.getElementById('ping-sound').play();
+                                
+                                const dominance = whale.side === 'BUY' ? 'BULLISH' : 'BEARISH';
+                                const color = whale.side === 'BUY' ? 'text-success' : 'text-danger';
+                                const message = `<p class="mb-1"><span class="${color}">${whale.whale_id}</span> detected: <strong class="${color}">${dominance} DOMINANCE</strong></p>`;
+                                
+                                if(squawkFeed.innerHTML.includes('Awaiting whale activity...')) {
+                                    squawkFeed.innerHTML = message;
+                                } else {
+                                    squawkFeed.innerHTML = message + squawkFeed.innerHTML;
+                                }
+                            }
+                            // Visual Indicator
+                            const trend = nasdaqStatus.textContent;
+                            if ((trend === 'BULLISH' && whale.side === 'BUY') || (trend === 'BEARISH' && whale.side === 'SELL')) {
+                                isAligned = true;
+                            }
+                        });
+                    }
+                    if (isAligned) {
+                        nasdaqStatus.classList.add('glow');
+                    }
                 })
                 .catch(e => {
                     console.error(e);
@@ -425,6 +494,21 @@
                 }
             })
             .catch(error => console.error("Error switching sizing mode:", error));
+        });
+
+        // DEV Mode Switcher Listener
+        document.getElementById('dev-mode-switch').addEventListener('change', function(e) {
+            fetch('/toggle_dev', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateStatus(); 
+                }
+            })
+            .catch(error => console.error("Error switching dev mode:", error));
         });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
