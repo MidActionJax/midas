@@ -1,6 +1,7 @@
 import threading
 import json
 import os
+import time
 
 class StateManager:
     """
@@ -16,6 +17,10 @@ class StateManager:
         self.trade_history = []
         self.price_history = {'MES': [], 'MNQ': []}
         self.ema_val = {'MES': None, 'MNQ': None}
+        self.detected_whales = []
+        self.whale_activity = {}
+        self.whale_last_seen = {}
+        self.active_dominant_whales = []
         self.daily_drawdown_limit = -500.0
         # New account state fields
         self.account_balance = 0.0
@@ -27,8 +32,16 @@ class StateManager:
         self.pnl_at_last_approval = None
         self.live_wins = 0
         self.live_trades = 0
+        self.dev_mode = False # Add dev_mode
         self.state_file = state_file
         self.load_price_history()
+
+    def toggle_dev_mode(self):
+        """Toggles the developer mode."""
+        with self._lock:
+            self.dev_mode = not self.dev_mode
+            print(f"--- Developer Mode set to: {self.dev_mode} ---")
+        return self.dev_mode
 
     @property
     def is_kill_switch_active(self):
@@ -118,6 +131,47 @@ class StateManager:
     def get_realized_pnl(self):
         with self._lock:
             return self.realized_pnl
+
+    def add_detected_whale(self, whale):
+        """
+        Adds a detected whale pattern, tracks its frequency, and identifies dominant whales.
+        """
+        with self._lock:
+            whale_id = whale.get('whale_id')
+            if not whale_id:
+                return
+
+            now = time.time()
+            last_seen = self.whale_last_seen.get(whale_id, 0)
+
+            if now - last_seen > 10:  # 10-second cooldown
+                print(f"--- RHYTHMIC PATTERN DETECTED [{whale.get('symbol')}]: {whale_id} ---")
+                self.whale_last_seen[whale_id] = now
+            
+            self.detected_whales.append(whale)
+
+            if whale_id not in self.whale_activity:
+                self.whale_activity[whale_id] = []
+            
+            # Add current timestamp and prune old ones
+            self.whale_activity[whale_id].append(now)
+            five_mins_ago = now - 300  # 5 minutes in seconds
+            self.whale_activity[whale_id] = [ts for ts in self.whale_activity[whale_id] if ts > five_mins_ago]
+            
+            # Check for dominance
+            if len(self.whale_activity[whale_id]) > 5:
+                if whale_id not in self.active_dominant_whales:
+                    self.active_dominant_whales.append(whale_id)
+                    print(f"--- New Dominant Whale Labeled: {whale_id} ---")
+
+    def get_detected_whales(self):
+        with self._lock:
+            return list(self.detected_whales)
+
+    def get_active_dominant_whales(self):
+        with self._lock:
+            return list(self.active_dominant_whales)
+
 
     def add_trade_to_history(self, trade):
         with self._lock:

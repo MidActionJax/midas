@@ -5,6 +5,7 @@ from adapters.paper_crypto import PaperCryptoAdapter
 from adapters.paper_futures import PaperFuturesAdapter
 from adapters.nt_futures import NTFuturesAdapter # Add this line
 from core import state, logic, logger
+from core.logic import TapeScanner
 
 class MidasEngine(threading.Thread):
     def __init__(self, symbols):
@@ -13,6 +14,7 @@ class MidasEngine(threading.Thread):
         self.symbols = symbols
         self.adapter = None
         self.last_trade_time = 0
+        self.scanner = TapeScanner()
 
     def manage_positions(self):
         """Monitors active positions, updates PnL, and logs closed trades."""
@@ -37,6 +39,13 @@ class MidasEngine(threading.Thread):
                     live_pnl = live_map[key].get('pnl', 0.0)
                     pos['unrealized_pnl'] = live_pnl
                 else:
+                    # --- DEV MODE STABILITY ---
+                    if state.state_manager.dev_mode:
+                        entry_time = pos.get('signal_timestamp', 0)
+                        if time.time() - entry_time < 30:
+                            print(f"--- DEV MODE: Delaying exit detection for {pos['symbol']} ---")
+                            continue # Skip exit logic for 30 seconds
+
                     # Position is closed.
                     final_pnl = pos.get('unrealized_pnl', 0.0)
                     reason = "Exit Detected" # We don't know the exact reason (TP/SL) from this logic.
@@ -68,6 +77,7 @@ class MidasEngine(threading.Thread):
                 if config.TRADING_MODE == 'NT_FUTURES':
                     print(f"Initializing NTFuturesAdapter on Account Port: {config.NT_PORT}")
                     self.adapter = NTFuturesAdapter(port=config.NT_PORT)
+                    self.adapter.scanner = self.scanner
                 elif config.TRADING_MODE == 'PAPER_FUTURES':
                     print("Initializing PaperFuturesAdapter...")
                     self.adapter = PaperFuturesAdapter()
@@ -101,14 +111,15 @@ class MidasEngine(threading.Thread):
                             state.state_manager.set_market_data(symbol, market_depth)
 
                             # Pass the entire price history map to the logic function
-                            signal = logic.analyze_order_book(symbol, market_depth, state.state_manager.price_history)
+                            signal = logic.analyze_order_book(symbol, market_depth, state.state_manager.price_history, self.adapter)
                             if signal:
                                 pending_signals = state.state_manager.get_pending_signals()
                                 is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
                                 
                                 if not is_duplicate:
                                     state.state_manager.add_pending_signal(signal)
-                                    print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} with {signal['confidence_score']:.2f}% confidence!!!")
+                                    confidence_score_str = f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)'
+                                    print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
