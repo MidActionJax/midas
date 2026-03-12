@@ -11,11 +11,13 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo
 
 from core.logger import log_signal
-from config import TRADING_SYMBOL
+from config import TRADING_SYMBOL, POSITION_MODE
 from core.midas_model import MidasBrain
+from core.state import state_manager
 
 # Initialize the MidasBrain globally
 brain = MidasBrain()
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, 'models', 'midas_truth_engine.joblib')
@@ -127,48 +129,24 @@ def calculate_ema(prices, period=200):
         
     return ema
 
-def calculate_position_size(balance, price, price_history, risk_pct=0.01):
+def calculate_position_size(price, price_history, risk_pct=0.01):
     """
     Calculates a dynamic position size based on account balance and market volatility (ATR).
+    Respects the sizing_mode setting from the state manager.
     """
-    if len(price_history) < 15: # Need at least 14 periods + one more for calculation
-        return round( (balance * risk_pct) / price, 2) # Fallback to simple % of balance if not enough data
+    # Logic for position mode from state manager
+    if state_manager.sizing_mode == 'FIXED':
+        return 1
 
-    # 1. Calculate True Range (simplified as absolute change between close prices)
-    true_ranges = [abs(price_history[i] - price_history[i-1]) for i in range(1, len(price_history))]
-    
-    # 2. Calculate ATR over the last 14 periods
-    if not true_ranges:
-        return 0.01 # Should not happen with the length check, but as a safeguard.
+    # AUTO mode logic
+    balance = state_manager.account_balance
+    if balance <= 0:
+        print("WARNING: Account balance is zero or negative. Cannot calculate AUTO position size.")
+        return 0 # Return 0 to prevent trades
 
-    atr = statistics.mean(true_ranges[-14:])
-    
-    if atr == 0:
-        return 0.01 # Avoid division by zero, return a minimum size
-
-    # 3. Calculate Position Size in terms of the asset
-    dollar_risk = balance * risk_pct
-    position_size_asset = dollar_risk / atr
-
-    # SURGICAL FIX: Check the current symbol to determine rounding
-    from config import TRADING_SYMBOL
-    
-    if TRADING_SYMBOL == 'ES':
-        # 1. Conservative Cap: Don't trade more notional value than your total balance
-        # (Real futures use margin, but for Paper Trading, this keeps it sane)
-        max_contracts = int(balance / price) 
-        
-        # 2. Final Size: Take the smaller of your risk calculation OR your account cap
-        final_size = min(max_contracts, int(position_size_asset))
-        
-        # DEBUG PRINT TO VERIFY SPRINT 4 MATH
-        print(f"--- POSITION MATH: Asset={TRADING_SYMBOL} | Final Size={final_size} | Risk={risk_pct*100}% ---")
-        return max(1, final_size)
-    else:
-        # Crypto can handle decimals
-        # DEBUG PRINT TO VERIFY SPRINT 4 MATH
-        print(f"--- POSITION MATH: Asset={TRADING_SYMBOL} | Raw Size={position_size_asset:.4f} | Risk={risk_pct*100}% ---")
-        return round(position_size_asset, 2)
+    # 1 contract per $5,000 of balance
+    contracts = int(balance / 5000)
+    return contracts
 
 
 def analyze_order_book(symbol, order_book, price_history_map, threshold=0.5):
