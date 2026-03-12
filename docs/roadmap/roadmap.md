@@ -85,7 +85,7 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟡 Sprint 9: Real-Time Sync & Live Controls (CURRENT)
+## 🟢 Sprint 9: Real-Time Sync & Live Controls (CURRENT)
 **Goal**: Connect the dashboard to your actual financial data and enable "One-Click" mode switching.
 - [ ] **Live Balance & PnL Sync**: Expand the C# MidasBridge to push your actual NinjaTrader account balance and daily PnL across the socket to the Python adapter.
 - [ ] **The "Master Switch"**: Add a toggle on the dashboard to seamlessly switch between "Paper" and "Live" (NT_FUTURES) modes without manually editing backend config files.
@@ -96,7 +96,7 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ---
 
-## 🟣 Sprint 10: The "Midas" Terminal Overhaul
+## 🟡 Sprint 10: The "Midas" Terminal Overhaul (CURRENT)
 **Goal**: Transform the current "mad ugly" interface into a professional, high-fidelity trading desk.
 - [ ] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that matches your Shrood branding.
 - [ ] **Interactive Equity Curve**: Integrate Chart.js to plot a live line graph of your account balance growth over time.
