@@ -109,6 +109,9 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 
 
+
+
+
 ## 🚀 The Real "Endgame" (Expanded)
 1. Multi-Strategy Integration (The Diversified Brain)
 Right now, Midas is a "one-trick pony" focused on Icebergs. If the market is choppy or there are no big "whales" playing, the bot sits on its hands.
