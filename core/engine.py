@@ -15,10 +15,46 @@ class MidasEngine(threading.Thread):
         self.last_trade_time = 0
 
     def manage_positions(self):
-        """Monitors active positions and triggers auto-sell based on PnL rules."""
+        """Monitors active positions, updates PnL, and logs closed trades."""
         if not self.adapter:
             return
-        # ... (rest of the manage_positions method remains the same for now) ...
+
+        try:
+            live_positions = self.adapter.get_open_positions()
+            tracked_positions = state.state_manager.get_active_positions()
+
+            live_map = { (p.get('symbol'), p.get('type')): p for p in live_positions }
+            
+            # Use a copy for safe iteration while removing
+            for pos in list(tracked_positions):
+                pos_type = 'LONG' if 'BUY' in pos.get('type', 'BUY_SIGNAL') else 'SHORT'
+                key = (pos.get('symbol'), pos_type)
+
+                if key in live_map:
+                    # Position is still open, update its PnL in our state.
+                    # This requires a new method in StateManager or re-adding the position.
+                    # For simplicity, we'll just add the PNL to the dictionary that we will process later.
+                    live_pnl = live_map[key].get('pnl', 0.0)
+                    pos['unrealized_pnl'] = live_pnl
+                else:
+                    # Position is closed.
+                    final_pnl = pos.get('unrealized_pnl', 0.0)
+                    reason = "Exit Detected" # We don't know the exact reason (TP/SL) from this logic.
+
+                    # Log the exit to the CSV
+                    logger.log_trade_exit(pos['signal_timestamp'], final_pnl, reason)
+
+                    # Update the global realized PnL
+                    state.state_manager.add_pnl(final_pnl)
+
+                    # Remove from state manager's active list
+                    state.state_manager.remove_position(pos)
+                    
+                    print(f"--- DETECTED CLOSED POSITION: {pos['symbol']} | PnL: {final_pnl} ---")
+                    # Set cooldown to prevent immediate re-entry
+                    self.last_trade_time = time.time()
+        except Exception as e:
+            print(f"Error in manage_positions: {e}")
 
     def run(self):
         print(f"MidasEngine starting for symbols: {self.symbols}")
@@ -30,7 +66,7 @@ class MidasEngine(threading.Thread):
 
             if self.adapter is None:
                 if config.TRADING_MODE == 'NT_FUTURES':
-                    print("Initializing NTFuturesAdapter...")
+                    print(f"Initializing NTFuturesAdapter on Account Port: {config.NT_PORT}")
                     self.adapter = NTFuturesAdapter(port=config.NT_PORT)
                 elif config.TRADING_MODE == 'PAPER_FUTURES':
                     print("Initializing PaperFuturesAdapter...")

@@ -17,6 +17,16 @@ class StateManager:
         self.price_history = {'MES': [], 'MNQ': []}
         self.ema_val = {'MES': None, 'MNQ': None}
         self.daily_drawdown_limit = -500.0
+        # New account state fields
+        self.account_balance = 0.0
+        self.daily_pnl = 0.0
+        self.last_sync_time = None
+        self.master_trading_mode = 'PAPER' # New master switch
+        self.sizing_mode = 'FIXED' # New sizing mode
+        self.session_start_balance = 0.0
+        self.pnl_at_last_approval = None
+        self.live_wins = 0
+        self.live_trades = 0
         self.state_file = state_file
         self.load_price_history()
 
@@ -24,6 +34,43 @@ class StateManager:
     def is_kill_switch_active(self):
         with self._lock:
             return self.realized_pnl <= self.daily_drawdown_limit
+
+    def set_master_trading_mode(self, mode):
+        """Sets the master trading mode (PAPER or LIVE)."""
+        with self._lock:
+            if mode in ['PAPER', 'LIVE']:
+                self.master_trading_mode = mode
+                print(f"--- Master Trading Mode set to: {mode} ---")
+
+    def set_sizing_mode(self, mode):
+        """Sets the position sizing mode (FIXED or AUTO)."""
+        with self._lock:
+            if mode in ['FIXED', 'AUTO']:
+                self.sizing_mode = mode
+                print(f"--- Sizing Mode set to: {mode} ---")
+
+    def set_signal_approved(self):
+        """Flags that a signal was just approved to track PnL outcome."""
+        with self._lock:
+            self.pnl_at_last_approval = self.daily_pnl
+
+    def update_account_state(self, balance, pnl, sync_time):
+        """Thread-safe method to update account-related state."""
+        with self._lock:
+            # Set the starting balance for the session on the first update
+            if self.session_start_balance == 0.0 and balance > 0:
+                self.session_start_balance = balance
+
+            # Check for outcome of a tracked trade
+            if self.pnl_at_last_approval is not None:
+                if pnl > self.pnl_at_last_approval:
+                    self.live_wins += 1
+                self.live_trades += 1
+                self.pnl_at_last_approval = None # Reset after checking
+
+            self.account_balance = balance
+            self.daily_pnl = pnl
+            self.last_sync_time = sync_time
 
     def set_market_data(self, symbol, data):
         with self._lock:

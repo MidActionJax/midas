@@ -11,7 +11,7 @@ CSV_FILE = os.path.join(PROJECT_ROOT, 'trade_history.csv')
 CSV_HEADER = [
     'timestamp_id', 'symbol', 'type', 'price', 'size',
     'ema_200_val', 'trend_dir', 'atr_volatility', 'session_context', 'whale_strength',
-    'ml_confidence', 'user_decision', 'final_pnl', 'outcome_label'
+    'ml_confidence', 'user_decision', 'final_pnl', 'outcome_label', 'exit_reason'
 ]
 
 def log_signal(signal_data, context_data, status):
@@ -40,7 +40,8 @@ def log_signal(signal_data, context_data, status):
         'ml_confidence': signal_data.get('confidence'),
         'user_decision': status,
         'final_pnl': '',
-        'outcome_label': ''
+        'outcome_label': '',
+        'exit_reason': ''
     }
 
     try:
@@ -160,3 +161,54 @@ def update_outcome(timestamp_id, pnl):
         time.sleep(0.1)
 
     print(f"Warning: Signal with timestamp_id {timestamp_id} not found for outcome update after multiple attempts.")
+
+def log_trade_exit(timestamp_id, pnl, reason):
+    """
+    Finds a trade by its signal timestamp_id and updates its exit information.
+    """
+    if not os.path.isfile(CSV_FILE):
+        print(f"Error: CSV file not found at {CSV_FILE}")
+        return
+
+    for attempt in range(3):
+        found = False
+        tempfile = NamedTemporaryFile(mode='w', delete=False, newline='', encoding='utf-8')
+        try:
+            with open(CSV_FILE, 'r', newline='', encoding='utf-8') as csvfile, tempfile:
+                reader = csv.DictReader(csvfile)
+                # Ensure all fields are covered, even if some are empty
+                writer = csv.DictWriter(tempfile, fieldnames=CSV_HEADER, extrasaction='ignore')
+                writer.writeheader()
+
+                for row in reader:
+                    try:
+                        # Match by comparing float representations to handle precision issues
+                        if 'timestamp_id' in row and row['timestamp_id'] and str(round(float(row['timestamp_id']), 4)) == str(round(float(timestamp_id), 4)):
+                            row['final_pnl'] = pnl
+                            row['outcome_label'] = 'WIN' if pnl > 0 else 'LOSS'
+                            row['exit_reason'] = reason
+                            found = True
+                    except (ValueError, TypeError):
+                        pass # Ignore rows where timestamp_id is not a valid float
+
+                    writer.writerow(row)
+            
+            if found:
+                shutil.move(tempfile.name, CSV_FILE)
+                print(f"--- EXIT LOGGED: ID={timestamp_id}, PnL={pnl}, Reason={reason} ---")
+                return
+
+        except FileNotFoundError:
+            print(f"Attempt {attempt + 1}: CSV file not found during exit logging, retrying...")
+        except Exception as e:
+            print(f"An error occurred during log_trade_exit on attempt {attempt + 1}: {e}")
+        finally:
+            if os.path.exists(tempfile.name):
+                os.remove(tempfile.name)
+        
+        if found:
+            return
+
+        time.sleep(0.1)
+
+    print(f"Warning: Signal with timestamp_id {timestamp_id} not found for exit logging after multiple attempts.")

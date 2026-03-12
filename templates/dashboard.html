@@ -9,6 +9,7 @@
         body { background-color: #212529; }
         .signal-card { border-left: 5px solid #ffc107; }
         .table-container { max-height: 400px; overflow-y: auto; }
+        .live-mode { border: 3px solid #dc3545 !important; }
     </style>
 </head>
 <body>
@@ -20,12 +21,44 @@
         <h1 class="text-center text-warning">Project Midas</h1>
         <p class="text-center text-muted">Order Flow "Grey Box" System</p>
 
-        <div class="d-flex justify-content-center align-items-center my-4 gap-2">
-            <select id="mode-selector" class="form-select bg-dark text-light border-secondary w-auto">
-                <option value="NT_FUTURES">Live: NinjaTrader (Futures)</option>
-                <option value="PAPER_FUTURES">Paper: Futures (S&P 500)</option>
-                <option value="PAPER_CRYPTO">Paper: Crypto (BTC)</option>
-            </select>
+        <!-- HUD Row -->
+        <div class="row text-center mb-4">
+            <div class="col-md-4">
+                <div class="card text-white bg-dark border-secondary h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-warning">Account Balance</h5>
+                        <p id="hud-balance" class="card-text fs-3">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card text-white bg-dark border-secondary h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-warning">Daily PnL</h5>
+                        <p id="hud-pnl" class="card-text fs-3">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card text-white bg-dark border-secondary h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-warning">Market Session</h5>
+                        <p id="hud-session" class="card-text fs-3">--</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-center align-items-center my-4 gap-3">
+            <div class="form-check form-switch fs-4">
+                <input class="form-check-input" type="checkbox" role="switch" id="master-switch">
+                <label class="form-check-label text-light" for="master-switch" id="master-switch-label">PAPER</label>
+            </div>
+            <!-- New Size Mode Switch -->
+            <div class="form-check form-switch fs-4">
+                <input class="form-check-input" type="checkbox" role="switch" id="sizing-mode-switch">
+                <label class="form-check-label text-light" for="sizing-mode-switch" id="sizing-mode-label">FIXED</label>
+            </div>
             <a id="start-button" href="/start_bot" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
@@ -102,6 +135,29 @@
             </div>
         </div>
 
+        <!-- Execution Log -->
+        <div class="card text-white bg-dark border-secondary mt-4">
+            <div class="card-header">Execution Log</div>
+            <div class="card-body">
+                <div class="table-container">
+                    <table class="table table-dark table-striped table-sm">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Price</th>
+                                <th>ML Confidence</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="execution-log-table">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <div class="d-grid gap-2 mt-4">
             <a href="/retrain" class="btn btn-outline-info">Retrain & Reload ML Model</a>
         </div>
@@ -118,7 +174,6 @@
                 .then(data => {
                     // Elements
                     const led = document.getElementById('status-led');
-                    const balanceEl = document.getElementById('balance');
                     const priceEl = document.getElementById('price');
                     const pnlEl = document.getElementById('pnl');
                     const openPositionsEl = document.getElementById('open-positions');
@@ -136,6 +191,17 @@
                     const totalPnlEl = document.getElementById('total-pnl');
                     const avgWinEl = document.getElementById('avg-win');
                     const avgLossEl = document.getElementById('avg-loss');
+                    // New HUD Elements
+                    const hudBalance = document.getElementById('hud-balance');
+                    const hudPnl = document.getElementById('hud-pnl');
+                    const hudSession = document.getElementById('hud-session');
+                    // New Log & Switch
+                    const masterSwitch = document.getElementById('master-switch');
+                    const masterSwitchLabel = document.getElementById('master-switch-label');
+                    const sizingModeSwitch = document.getElementById('sizing-mode-switch');
+                    const sizingModeLabel = document.getElementById('sizing-mode-label');
+                    const executionLogTable = document.getElementById('execution-log-table');
+
 
                     // 0. Handle Kill Switch
                     if (data.kill_switch_active) {
@@ -176,40 +242,73 @@
                             nasdaqStatus.className = 'badge bg-secondary';
                         }
                     }
-                    if (data.nasdaq_ema) {
+                    if (data.nasdaq_ema !== undefined && data.nasdaq_ema !== null) {
+                        // Show the number even if it is 0.00
                         nasdaqEma.textContent = data.nasdaq_ema.toFixed(2);
-                    }
-                    
-                    // 2. Balance & PnL
-                    if (data.balance !== undefined && data.balance !== "N/A") {
-                        balanceEl.textContent = '$' + parseFloat(data.balance).toLocaleString('en-US', {minimumFractionDigits: 2});
-                    }
-                    openPositionsEl.textContent = data.open_positions;
-                    
-                    const pnl = parseFloat(data.realized_pnl);
-                    pnlEl.textContent = '$' + pnl.toLocaleString('en-US', {minimumFractionDigits: 2});
-                    if (pnl > 0) {
-                        pnlEl.className = 'text-success';
-                    } else if (pnl < 0) {
-                        pnlEl.className = 'text-danger';
                     } else {
-                        pnlEl.className = 'text-light';
+                        nasdaqEma.textContent = "N/A";
+                    }
+                    
+                    // 2. HUD and PnL
+                    const formatCurrency = (val, isMainBalance = false) => {
+                        const numericVal = parseFloat(val);
+                        if (isMainBalance && (numericVal === 0 || isNaN(numericVal)) && data.active) {
+                            return "Syncing...";
+                        }
+                        return '$' + numericVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    };
+                    
+                    hudBalance.textContent = formatCurrency(data.account_balance); // Added 'true'
+                    hudPnl.textContent = formatCurrency(data.daily_pnl); 
+                    document.getElementById('balance').textContent = formatCurrency(data.account_balance); // Fixes the "Loading..." in Live Feed
+                    
+                    const dailyPnl = parseFloat(data.daily_pnl);
+                    hudPnl.textContent = formatCurrency(dailyPnl);
+
+                    if (dailyPnl > 0) hudPnl.className = 'card-text fs-3 text-success';
+                    else if (dailyPnl < 0) hudPnl.className = 'card-text fs-3 text-danger';
+                    else hudPnl.className = 'card-text fs-3 text-light';
+
+                    hudSession.textContent = data.market_session;
+                    
+                    const realizedPnl = parseFloat(data.realized_pnl);
+                    pnlEl.textContent = formatCurrency(realizedPnl);
+                    if (realizedPnl > 0) pnlEl.className = 'text-success';
+                    else if (realizedPnl < 0) pnlEl.className = 'text-danger';
+                    else pnlEl.className = 'text-light';
+
+                    openPositionsEl.textContent = data.open_positions;
+
+                    // Master Switch
+                    masterSwitch.checked = data.master_trading_mode === 'LIVE';
+                    masterSwitchLabel.textContent = data.master_trading_mode;
+                    if (data.master_trading_mode === 'LIVE') {
+                        masterSwitchLabel.classList.add('text-danger');
+                        document.body.classList.add('live-mode');
+                    } else {
+                        masterSwitchLabel.classList.remove('text-danger');
+                        document.body.classList.remove('live-mode');
+                    }
+
+                    // Sizing Mode Switch
+                    sizingModeSwitch.checked = data.sizing_mode === 'AUTO';
+                    sizingModeLabel.textContent = data.sizing_mode;
+                    if (data.sizing_mode === 'AUTO') {
+                        sizingModeLabel.classList.add('text-primary');
+                    } else {
+                        sizingModeLabel.classList.remove('text-primary');
                     }
 
                     // Performance Scorecard
                     if (data.performance) {
                         winRateEl.textContent = data.performance.win_rate + '%';
-                        totalPnlEl.textContent = '$' + data.performance.total_pnl.toLocaleString('en-US', {minimumFractionDigits: 2});
-                        avgWinEl.textContent = '$' + data.performance.avg_win.toLocaleString('en-US', {minimumFractionDigits: 2});
-                        avgLossEl.textContent = '$' + data.performance.avg_loss.toLocaleString('en-US', {minimumFractionDigits: 2});
+                        totalPnlEl.textContent = formatCurrency(data.performance.total_pnl);
+                        avgWinEl.textContent = formatCurrency(data.performance.avg_win);
+                        avgLossEl.textContent = formatCurrency(data.performance.avg_loss);
 
-                        if (data.performance.win_rate > 60) {
-                            winRateEl.className = 'fs-3 text-success';
-                        } else if (data.performance.win_rate < 45) {
-                            winRateEl.className = 'fs-3 text-danger';
-                        } else {
-                            winRateEl.className = 'fs-3 text-warning';
-                        }
+                        if (data.performance.win_rate > 60) winRateEl.className = 'fs-3 text-success';
+                        else if (data.performance.win_rate < 45) winRateEl.className = 'fs-3 text-danger';
+                        else winRateEl.className = 'fs-3 text-warning';
                     }
 
 
@@ -231,16 +330,11 @@
                         data.pending_signals.forEach(s => {
                             const color = s.type === 'BUY_SIGNAL' ? 'text-success' : 'text-danger';
                             
-                            // --- ML Confidence Badge ---
-                            const score = s.confidence_score;
-                            let badgeColor = 'bg-danger';
+                            const score = s.ml_confidence ? parseFloat(s.ml_confidence.replace('%','')) : 0;
+                            let badgeColor = 'bg-secondary';
                             let textColor = 'text-white';
-                            if (score > 75) {
-                                badgeColor = 'bg-success';
-                            } else if (score >= 60) {
-                                badgeColor = 'bg-warning';
-                                textColor = 'text-dark';
-                            }
+                            if (score > 75) badgeColor = 'bg-success';
+                            else if (score >= 60) { badgeColor = 'bg-warning'; textColor = 'text-dark'; }
                             const confidenceBadge = score ? `<span class="badge ${badgeColor} ${textColor} ms-3">ML Confidence: ${score.toFixed(2)}%</span>` : '';
 
                             cardsDiv.innerHTML += `
@@ -260,6 +354,27 @@
                     } else {
                         queueDiv.style.display = 'none';
                     }
+
+                    // 5. Execution Log
+                    executionLogTable.innerHTML = '';
+                    if(data.execution_log) {
+                        data.execution_log.reverse().forEach(log => {
+                            const confidence = log.ml_confidence ? parseFloat(log.ml_confidence.replace('%','')) : null;
+                            const confidenceText = confidence ? `${confidence.toFixed(2)}%` : 'N/A';
+                            const statusColor = log.status === 'Executed' ? 'text-success' : (log.status === 'Vetoed' ? 'text-danger' : 'text-warning');
+
+                            executionLogTable.innerHTML += `
+                                <tr>
+                                    <td>${new Date(log.timestamp * 1000).toLocaleTimeString()}</td>
+                                    <td>${log.symbol}</td>
+                                    <td>${log.type}</td>
+                                    <td>${log.price}</td>
+                                    <td>${confidenceText}</td>
+                                    <td class="${statusColor}">${log.status}</td>
+                                </tr>
+                            `;
+                        });
+                    }
                 })
                 .catch(e => {
                     console.error(e);
@@ -272,24 +387,44 @@
         setInterval(updateStatus, 1000);
         document.addEventListener('DOMContentLoaded', updateStatus);
 
-        // Mode Switcher Listener
-        document.getElementById('mode-selector').addEventListener('change', function(e) {
-            const selectedMode = e.target.value;
+        // Master Switcher Listener
+        document.getElementById('master-switch').addEventListener('change', function(e) {
+            const newMode = e.target.checked ? 'LIVE' : 'PAPER';
             
-            fetch('/switch_mode', {
+            fetch('/set_master_mode', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ mode: selectedMode })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: newMode })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    alert("Mode Switched to " + selectedMode + "!\n\nPlease STOP and START the engine to apply changes.");
+                    // Instantly update UI and show alert
+                    updateStatus(); 
+                    if(newMode === 'LIVE'){
+                        alert("WARNING: Live trading mode activated. Real funds are at risk.");
+                    }
                 }
             })
-            .catch(error => console.error("Error switching modes:", error));
+            .catch(error => console.error("Error switching master mode:", error));
+        });
+
+        // Sizing Mode Switcher Listener
+        document.getElementById('sizing-mode-switch').addEventListener('change', function(e) {
+            const newMode = e.target.checked ? 'AUTO' : 'FIXED';
+            
+            fetch('/set_sizing_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: newMode })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateStatus(); 
+                }
+            })
+            .catch(error => console.error("Error switching sizing mode:", error));
         });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

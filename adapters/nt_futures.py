@@ -1,15 +1,23 @@
 import socket
 import random
 import math
+import threading
+import json
+from datetime import datetime
+from core.state import state_manager
 
 class NTFuturesAdapter:
-    def __init__(self, host='127.0.0.1', port=36973):
+    def __init__(self, host='127.0.0.1', port=36970):
         """
         Initializes the Adapter for NinjaTrader 8 via Socket Bridge.
         """
         self.host = host
         self.port = port
-        self.contracts = {}
+        self.is_listening = False
+        self.contracts = {
+            'MES': 'MES',
+            'MNQ': 'MNQ'
+        }
         
         # --- State for Indicator Calculations ---
         self.price_history = {'MES': [], 'MNQ': []}
@@ -20,22 +28,55 @@ class NTFuturesAdapter:
         }
         self.last_price = {'MES': None, 'MNQ': None}
 
-        try:
-            print(f"Connecting to NinjaTrader 8 MidasBridge on port {self.port}...")
-            
-            # Ping the NT8 server to ensure the bridge is open
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(2)
-                s.connect((self.host, self.port))
-            print("Successfully connected to NT8.")
-            
-            # Define contracts mapped to NT8 formatting instead of IBKR ContFuture
-            self.contracts['MES'] = 'MES'
-            self.contracts['MNQ'] = 'MNQ'
+        # SURGICAL FIX: Remove the "connect" ping. 
+        # Python is the SERVER on 36970, so it shouldn't try to "connect" to NT8 there.
+        print(f"Initializing Account Listener on {self.host}:{self.port}...")
+        self.start_listening()
 
-        except Exception as e:
-            print(f"Error connecting to NT8: {e}")
-            self.port = None 
+    def start_listening(self):
+        """Starts the background thread to listen for broadcasted updates from C#."""
+        if not self.is_listening:
+            self.is_listening = True
+            self.listener_thread = threading.Thread(target=self._listen_for_updates, daemon=True)
+            self.listener_thread.start()
+            print(f"--- Started listening for NT8 updates on port {self.port} ---")
+
+    def stop_listening(self):
+        """Stops the listening thread."""
+        self.is_listening = False
+
+    def _listen_for_updates(self):
+        """The main loop for the listener thread."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind((self.host, self.port))
+            server_socket.listen()
+            
+            while self.is_listening:
+                try:
+                    conn, addr = server_socket.accept()
+                    with conn:
+                        data = conn.recv(1024).decode('utf-8')
+                        if not data:
+                            continue
+                        
+                        message = json.loads(data)
+                        
+                        if message.get('LABEL') == 'ACCOUNT_UPDATE':
+                            state_manager.update_account_state(
+                                balance=message.get('ACCOUNT_VALUE', 0.0),
+                                pnl=message.get('DAILY_PNL', 0.0),
+                                sync_time=datetime.now()
+                            )
+                            # Optional: log that we received it
+                            # print(f"Received ACCOUNT_UPDATE: Balance={message.get('ACCOUNT_VALUE')}")
+                            
+                except json.JSONDecodeError:
+                    # Occurs if the data isn't a full JSON object, can be ignored.
+                    pass
+                except Exception as e:
+                    if self.is_listening:
+                        print(f"Error in listener thread: {e}")
 
     def get_wallet_balance(self):
         """
@@ -129,9 +170,9 @@ class NTFuturesAdapter:
                 self.current_features['above_ema'] = price > self.current_features['ema_200_val']
                 
             # 3. Correlation Check
-            if len(self.price_history['MES']) > 5 and len(self.price_history['MNQ']) > 5:
-                mes_dir = self.price_history['MES'][-1] > self.price_history['MES'][-5]
-                mnq_dir = self.price_history['MNQ'][-1] > self.price_history['MNQ'][-5]
+            if len(self.price_history['MES']) > 20 and len(self.price_history['MNQ']) > 20:
+                mes_dir = self.price_history['MES'][-1] > self.price_history['MES'][-20]
+                mnq_dir = self.price_history['MNQ'][-1] > self.price_history['MNQ'][-20]
                 self.current_features['in_sync'] = (mes_dir == mnq_dir)
 
             self.last_bar_time[symbol] = minute_timestamp
@@ -149,6 +190,14 @@ class NTFuturesAdapter:
         """
         print(f"NT8 SIMULATION SELL: {size} of {symbol}")
         return True
+    
+    def get_open_positions(self):
+        """
+        Returns the current active positions tracked by the adapter.
+        For NinjaTrader, this returns the positions we've stored in state.
+        """
+        from core.state import state_manager
+        return state_manager.get_active_positions()
 
 if __name__ == '__main__':
     # Test block identical to the original blueprint

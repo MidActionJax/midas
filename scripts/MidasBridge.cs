@@ -5,6 +5,9 @@ using System.Text;
 using System.Threading.Tasks;
 using System.ComponentModel.DataAnnotations;
 using NinjaTrader.NinjaScript;
+using System.Threading;
+using System.Linq;
+using NinjaTrader.Cbi;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
@@ -12,9 +15,15 @@ namespace NinjaTrader.NinjaScript.Indicators
     {
         private TcpListener server;
         private bool isRunning;
+        private Timer accountUpdateTimer;
+        private double lastPnl = double.MinValue;
+        private Account account;
+        private int AccountPort = 36970;
+
 
         protected override void OnStateChange()
         {
+            Print("BRIDGE STATE: " + State.ToString());
             if (State == State.SetDefaults)
             {
                 Description = "Midas Engine Data Bridge";
@@ -23,17 +32,97 @@ namespace NinjaTrader.NinjaScript.Indicators
                 IsOverlay = true;
                 ServerPort = 36999; // Default to MES port
             }
+            else if (State == State.Configure)
+            {
+                // --- Account Audit ---
+                foreach(Account a in Cbi.Account.All) { Print("AVAILABLE ACCOUNT: " + a.Name); }
+                // -------------------
+
+                Print("SEARCHING FOR: DEMO5611174");
+                // Find the specific Demo account from your screenshot
+                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174");
+
+                if (account != null) Print("FOUND ACCOUNT: " + account.Name);
+
+                if (account == null)
+                {
+                    Print("MidasBridge ERROR: Could not find account DEMO5611174!");
+                }
+            }
             else if (State == State.DataLoaded)
             {
                 server = new TcpListener(IPAddress.Any, ServerPort);
                 server.Start();
                 isRunning = true;
                 Task.Run(() => ListenForPython());
+
+                // Start the timer to send account updates
+                accountUpdateTimer = new Timer(SendAccountUpdate, null, 0, 5000);
             }
             else if (State == State.Terminated)
             {
                 isRunning = false;
                 server?.Stop();
+                accountUpdateTimer?.Dispose();
+            }
+        }
+
+        private void SendAccountUpdate(object state)
+        {
+            Print("--- DEBUG START ---");
+            
+            // 1. Check Account
+            if (account == null) {
+                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174");
+                Print("1. Searching for Account... " + (account != null ? "FOUND" : "NOT FOUND"));
+            }
+            
+            if (account == null) return;
+
+            if (System.Windows.Application.Current != null)
+            {
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                {
+                    try {
+                        // 2. Check Values
+                        double currentPnl = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                        double balance = account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+                        Print(string.Format("2. Data Pulled - Balance: {0}, PnL: {1}", balance, currentPnl));
+
+                        // 3. Check JSON Construction
+                        string json = "{" +
+                            "\"LABEL\":\"ACCOUNT_UPDATE\"," +
+                            "\"ACCOUNT_VALUE\":" + balance + "," +
+                            "\"DAILY_PNL\":" + currentPnl + "," +
+                            "\"CASH_VALUE\":" + account.Get(AccountItem.CashValue, Currency.UsDollar) +
+                        "}";
+                        Print("3. JSON Created.");
+
+                        // 4. Attempt Socket
+                        SendDataToPython(json);
+                    }
+                    catch (Exception ex) {
+                        Print("CRASH IN TIMER: " + ex.Message);
+                    }
+                });
+            }
+        }
+
+        private void SendDataToPython(string data)
+        {
+            Print("SENDING DATA TO PYTHON...");
+            try
+            {
+                using (TcpClient client = new TcpClient("127.0.0.1", AccountPort))
+                using (NetworkStream stream = client.GetStream())
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(data);
+                    stream.Write(bytes, 0, bytes.Length);
+                }
+            }
+            catch (Exception ex)
+            {
+                Print("SOCKET ERROR: " + ex.Message);
             }
         }
 

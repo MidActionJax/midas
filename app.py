@@ -6,7 +6,7 @@ import os
 import core.engine
 from core import state
 import core.logger
-from core.logic import brain # ADDED
+from core.logic import brain, get_market_session
 import config
 import time
 import pandas as pd
@@ -29,44 +29,46 @@ def load_user(user_id):
     return User(user_id)
 
 def get_performance_stats():
-    """Reads trade_history.csv and calculates performance metrics safely."""
+    """
+    Calculates performance metrics.
+    - Live PnL and Win Rate are from the current session's state.
+    - Historical averages (Avg Win/Loss) are from the CSV file.
+    """
+    # --- Live Session Data ---
+    live_pnl = 0
+    win_rate = 0
+    if state.state_manager.session_start_balance > 0:
+        live_pnl = state.state_manager.account_balance - state.state_manager.session_start_balance
+    
+    if state.state_manager.live_trades > 0:
+        win_rate = (state.state_manager.live_wins / state.state_manager.live_trades) * 100
+
+    # --- Historical Data ---
+    avg_win = 0
+    avg_loss = 0
+    total_trades = 0
     try:
-        # Check if the file exists and has content
-        if not os.path.exists('trade_history.csv') or os.stat('trade_history.csv').st_size == 0:
-            return {'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0, 'total_trades': 0}
-
-        df = pd.read_csv('trade_history.csv')
-        
-        # Verify the required columns exist before processing
-        required_columns = ['outcome_label', 'final_pnl']
-        if not all(col in df.columns for col in required_columns):
-            return {'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0, 'total_trades': 0}
-        
-        # Filter for trades that have a definitive outcome
-        closed_trades = df.dropna(subset=['outcome_label'])
-        
-        if closed_trades.empty:
-            return {'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0, 'total_trades': 0}
-
-        wins = closed_trades[closed_trades['outcome_label'] == 'WIN']
-        losses = closed_trades[closed_trades['outcome_label'] == 'LOSS']
-
-        win_rate = (len(wins) / len(closed_trades)) * 100
-        total_pnl = closed_trades['final_pnl'].sum()
-        
-        avg_win = wins['final_pnl'].mean() if not wins.empty else 0
-        avg_loss = losses['final_pnl'].mean() if not losses.empty else 0
-
-        return {
-            'win_rate': round(float(win_rate), 2),
-            'total_pnl': round(float(total_pnl), 2),
-            'avg_win': round(float(avg_win), 2),
-            'avg_loss': round(float(avg_loss), 2),
-            'total_trades': int(len(closed_trades))
-        }
+        if os.path.exists('trade_history.csv') and os.stat('trade_history.csv').st_size > 0:
+            df = pd.read_csv('trade_history.csv')
+            required_columns = ['outcome_label', 'final_pnl']
+            if all(col in df.columns for col in required_columns):
+                closed_trades = df.dropna(subset=['outcome_label'])
+                if not closed_trades.empty:
+                    wins = closed_trades[closed_trades['outcome_label'] == 'WIN']
+                    losses = closed_trades[closed_trades['outcome_label'] == 'LOSS']
+                    avg_win = wins['final_pnl'].mean() if not wins.empty else 0
+                    avg_loss = losses['final_pnl'].mean() if not losses.empty else 0
+                    total_trades = int(len(closed_trades))
     except Exception:
-        # Silently fail and return zeros to keep the dashboard running
-        return {'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0, 'total_trades': 0}
+        pass # Silently fail to keep dashboard running
+
+    return {
+        'win_rate': round(float(win_rate), 2),
+        'total_pnl': round(float(live_pnl), 2),
+        'avg_win': round(float(avg_win), 2),
+        'avg_loss': round(float(avg_loss), 2),
+        'total_trades': total_trades
+    }
 
 # To prevent caching of the status endpoint
 @app.after_request
@@ -109,10 +111,40 @@ def stop_bot():
 def status():
     """Returns the current status of the bot for AJAX updates."""
     performance_stats = get_performance_stats()
+    
+    # Get new HUD data from state
+    account_balance = state.state_manager.account_balance
+    daily_pnl = state.state_manager.daily_pnl
+    market_session = get_market_session()
+    master_mode = state.state_manager.master_trading_mode
+    sizing_mode = state.state_manager.sizing_mode
+
+    # Generate Execution Log
+    execution_log = []
+    try:
+        if os.path.exists('trade_history.csv'):
+            log_df = pd.read_csv('trade_history.csv').tail(10)
+            log_df = log_df.replace({np.nan: None}) # Replace NaN with None for JSON
+            for _, row in log_df.iterrows():
+                decision = row.get('user_decision', 'N/A')
+                status = 'Vetoed' if decision == 'REJECTED' else 'Pending'
+                if decision == 'APPROVED':
+                    status = 'Simulated' if master_mode == 'PAPER' else 'Executed'
+
+                execution_log.append({
+                    'timestamp': row.get('timestamp_id'),
+                    'symbol': row.get('symbol'),
+                    'type': row.get('type'),
+                    'price': row.get('price'),
+                    'ml_confidence': row.get('ml_confidence'),
+                    'status': status
+                })
+    except Exception as e:
+        print(f"Error generating execution log: {e}")
+
     status_data = {
         'active': False,
         'price': "N/A",
-        'balance': "N/A",
         'symbol': config.TRADING_SYMBOL,
         'market_depth': None,
         'pending_signals': [],
@@ -121,7 +153,15 @@ def status():
         'kill_switch_active': state.state_manager.is_kill_switch_active,
         'nasdaq_status': 'UNKNOWN',
         'nasdaq_ema': None,
-        'performance': performance_stats
+        'performance': performance_stats,
+        # HUD Data
+        'account_balance': account_balance,
+        'daily_pnl': daily_pnl,
+        'market_session': market_session,
+        # Master Switch & Log
+        'master_trading_mode': master_mode,
+        'sizing_mode': sizing_mode,
+        'execution_log': execution_log
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
@@ -135,9 +175,6 @@ def status():
                 price = core.engine.engine_thread.adapter.get_current_price(config.TRADING_SYMBOL)
                 status_data['price'] = price
                 
-                balance = core.engine.engine_thread.adapter.get_wallet_balance()
-                status_data['balance'] = balance
-                
              except Exception as e:
                 print(f"Error fetching data: {e}")
                 status_data['price'] = "Error"
@@ -148,12 +185,21 @@ def status():
         status_data['pending_signals'] = pending_signals
 
         # Add Nasdaq trend data if available
-        if config.TRADING_MODE == 'PAPER_FUTURES':
-            mnq_ema = state.state_manager.ema_val.get('MNQ')
-            if mnq_ema and state.state_manager.price_history.get('MNQ'):
-                current_mnq_price = state.state_manager.price_history['MNQ'][-1]
-                status_data['nasdaq_ema'] = mnq_ema
-                status_data['nasdaq_status'] = "BULLISH" if current_mnq_price > mnq_ema else "BEARISH"
+        # Add Nasdaq trend data if available
+        if config.TRADING_MODE in ['PAPER_FUTURES', 'NT_FUTURES']:
+            if core.engine.engine_thread and core.engine.engine_thread.adapter:
+                features = core.engine.engine_thread.adapter.current_features
+                mnq_ema = features.get('ema_200_val')
+                
+                # --- NEW FEEDBACK LOGIC ---
+                if mnq_ema and state.state_manager.price_history.get('MNQ'):
+                    current_mnq_price = state.state_manager.price_history['MNQ'][-1]
+                    status_data['nasdaq_ema'] = mnq_ema
+                    status_data['nasdaq_status'] = "BULLISH" if current_mnq_price > mnq_ema else "BEARISH"
+                else:
+                    # Tells the dashboard we are collecting the 200 bars
+                    status_data['nasdaq_status'] = "CALCULATING..."
+                    status_data['nasdaq_ema'] = 0.0
 
     return jsonify(status_data)
 
@@ -175,6 +221,26 @@ def switch_mode():
     print(f"!!! SYSTEM MODE SWITCHED TO: {config.TRADING_MODE} ({config.TRADING_SYMBOL}) !!!")
     return jsonify({'status': 'success', 'mode': config.TRADING_MODE, 'symbol': config.TRADING_SYMBOL})
 
+@app.route('/set_master_mode', methods=['POST'])
+@login_required
+def set_master_mode():
+    data = request.get_json()
+    new_mode = data.get('mode')
+    if new_mode in ['PAPER', 'LIVE']:
+        state.state_manager.set_master_trading_mode(new_mode)
+        return jsonify({'status': 'success', 'master_mode': new_mode})
+    return jsonify({'status': 'error', 'message': 'Invalid mode'}), 400
+
+@app.route('/set_sizing_mode', methods=['POST'])
+@login_required
+def set_sizing_mode():
+    data = request.get_json()
+    new_mode = data.get('mode')
+    if new_mode in ['FIXED', 'AUTO']:
+        state.state_manager.set_sizing_mode(new_mode)
+        return jsonify({'status': 'success', 'sizing_mode': new_mode})
+    return jsonify({'status': 'error', 'message': 'Invalid sizing mode'}), 400
+
 @app.route('/approve_signal/<float:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):
@@ -194,6 +260,10 @@ def approve_signal(signal_id):
         return jsonify({'status': 'error', 'message': 'Signal not found.'}), 404
 
     try:
+        # --- Live Win Rate Tracking ---
+        state.state_manager.set_signal_approved()
+        # --------------------------
+
         adapter = core.engine.engine_thread.adapter
         trade_executed = False
         if signal_to_execute['type'] == 'BUY_SIGNAL':
