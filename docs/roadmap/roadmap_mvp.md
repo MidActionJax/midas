@@ -21,14 +21,14 @@
 - [x] **The Strategy Manager**: Implement a manager script to toggle specific strategies on/off based on the detected market regime (e.g., shutting off Trend during ranging periods).
 - [x] **Risk Smoothing**: Adjust logic to ensure that a bad day for one strategy is balanced by the success of others, smoothing the overall equity curve.
 
-## 🟡 Sprint 12: RL Simulator & Synthetic Training
+## 🟢 Sprint 12: RL Simulator & Synthetic Training
 **Goal**: Transition from Software Engineer to AI Researcher by building a "Zero-Human" Alpha.
-- [ ] **The Midas Simulator**: Build a high-fidelity environment where the bot "plays" the market like a video game to learn from mistakes.
-- [ ] **Reward Function Optimization**: Define a points-based system for profit vs. drawdown to guide the Reinforcement Learning (RL) agent.
-- [ ] **GAN Data Generation**: Use Generative Adversarial Networks to create "synthetic" historical data for stress testing against trillions of hours of black-swan scenarios.
+- [x] **The Midas Simulator**: Build a high-fidelity environment where the bot "plays" the market like a video game to learn from mistakes.
+- [x] **Reward Function Optimization**: Define a points-based system for profit vs. drawdown to guide the Reinforcement Learning (RL) agent.
+- [x] **GAN Data Generation**: Use Generative Adversarial Networks to create "synthetic" historical data for stress testing against trillions of hours of black-swan scenarios.
 - [ ] **Self-Correction Logic**: Enable the RL agent to re-train itself as market conditions change over time.
 
-## ⚪ Sprint 13: The "Midas" Terminal Overhaul
+## 🟡 Sprint 13: The "Midas" Terminal Overhaul
 **Goal**: Transform the current "mad ugly" interface into a professional, high-fidelity cybersecurity-themed trading desk.
 - [ ] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that aligns with your Shrood branding.
 - [ ] **Interactive Equity Curve**: Integrate Chart.js to plot a live, functional line graph of your account balance growth over time.
