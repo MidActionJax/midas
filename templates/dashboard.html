@@ -56,6 +56,10 @@
                 </div>
             </div>
         </div>
+        <!-- EMERGENCY KILL SWITCH -->
+        <button type="button" class="btn btn-danger btn-lg fw-bold mb-3" style="width: 100%; border: 2px solid darkred; text-transform: uppercase;" onclick="triggerKillSwitch()">
+            🛑 FLATTEN ALL POSITIONS
+        </button>
 
         <div class="d-flex justify-content-center align-items-center my-4 gap-3">
             <div class="form-check form-switch fs-4">
@@ -193,6 +197,35 @@
         // API Calls
         function approveSignal(id) { fetch(`/approve_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
         function rejectSignal(id) { fetch(`/reject_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
+
+        function triggerKillSwitch() {
+            // 1. Show the confirmation dialog
+            if (confirm("EMERGENCY: Are you sure you want to close all positions and pause the bot?")) {
+                
+                // 2. Send the POST request to the backend route
+                fetch('/kill_switch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // 3. Show the result and refresh the page
+                    if (data.status === 'success') {
+                        alert(data.message);
+                    } else {
+                        alert("Error: " + data.message);
+                    }
+                    location.reload(); // Refresh to visually confirm positions are gone
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert("A network error occurred while trying to trigger the kill switch.");
+                });
+            }
+        }
+
 
         function updateStatus() {
             fetch('/status')

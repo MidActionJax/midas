@@ -392,3 +392,99 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
     print(f"--- FILTERED: {signal['type']} blocked by {trend_mes} trend ---")
     return None
+
+def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
+    """
+    Mean Reversion strategy for ranging markets.
+    """
+    if chop_index <= 61.8 or not order_book or symbol != 'MES':
+        return None
+
+    if len(price_history) < 20:
+        return None
+
+    recent_prices = price_history[-20:]
+    rolling_high = max(recent_prices)
+    rolling_low = min(recent_prices)
+    price_range = rolling_high - rolling_low
+
+    if price_range == 0:
+        return None
+
+    current_price = price_history[-1]
+    lower_band = rolling_low + (0.1 * price_range)
+    upper_band = rolling_high - (0.1 * price_range)
+
+    signal = None
+    threshold = 0.5
+
+    if current_price <= lower_band and 'bids' in order_book and order_book['bids']:
+        for price, size in order_book['bids']:
+            if float(size) > threshold:
+                signal = {
+                    'type': 'BUY_SIGNAL',
+                    'price': price,
+                    'size': float(size),
+                    'reason': 'Mean Reversion',
+                    'confidence_score': 80.0,
+                    'timestamp': round(time.time(), 4)
+                }
+                break
+
+    if not signal and current_price >= upper_band and 'asks' in order_book and order_book['asks']:
+        for price, size in order_book['asks']:
+            if float(size) > threshold:
+                signal = {
+                    'type': 'SELL_SIGNAL',
+                    'price': price,
+                    'size': float(size),
+                    'reason': 'Mean Reversion',
+                    'confidence_score': 80.0,
+                    'timestamp': round(time.time(), 4)
+                }
+                break
+
+    return signal
+
+def analyze_breakout(symbol, order_book, price_history, chop_index):
+    """
+    Breakout strategy for birthing trends.
+    """
+    if chop_index >= 38.2 or symbol != 'MES':
+        return None
+
+    if len(price_history) < 21:
+        return None
+
+    # Use previous 20 periods so current price can actually "break out" of the historical range
+    recent_prices = price_history[-21:-1]
+    rolling_high = max(recent_prices)
+    rolling_low = min(recent_prices)
+
+    atr = get_current_atr(price_history, period=14)
+    if atr == 0.0:
+        return None
+
+    current_price = price_history[-1]
+    signal = None
+
+    if current_price > rolling_high + (0.5 * atr):
+        signal = {
+            'type': 'BUY_SIGNAL',
+            'price': current_price,
+            'size': 1.0,
+            'reason': 'Breakout',
+            'confidence_score': 80.0,
+            'timestamp': round(time.time(), 4)
+        }
+    elif current_price < rolling_low - (0.5 * atr):
+        signal = {
+            'type': 'SELL_SIGNAL',
+            'price': current_price,
+            'size': 1.0,
+            'reason': 'Breakout',
+            'confidence_score': 80.0,
+            'timestamp': round(time.time(), 4)
+        }
+
+    return signal
