@@ -250,6 +250,14 @@ def set_sizing_mode():
         return jsonify({'status': 'success', 'sizing_mode': new_mode})
     return jsonify({'status': 'error', 'message': 'Invalid sizing mode'}), 400
 
+@app.route('/kill_switch', methods=['POST'])
+@login_required
+def kill_switch():
+    if core.engine.engine_thread and core.engine.engine_thread.is_alive():
+        core.engine.engine_thread.flatten_all()
+        return jsonify({'status': 'success', 'message': 'Kill switch activated. All positions flattened and trading paused.'})
+    return jsonify({'status': 'error', 'message': 'Engine not running.'}), 400
+
 @app.route('/toggle_dev', methods=['POST'])
 @login_required
 def toggle_dev():

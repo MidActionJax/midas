@@ -50,59 +50,75 @@ class NTFuturesAdapter:
 
     def _listen_for_updates(self):
         """The main loop for the listener thread - Now handles the Tape!"""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_socket.bind((self.host, self.port))
-            server_socket.listen()
-            
+        server_socket = None
+        bound = False
+        for offset in range(5):
+            target_port = self.port + offset
+            try:
+                server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                server_socket.bind((self.host, target_port))
+                server_socket.listen()
+                self.port = target_port # Update port so others know
+                bound = True
+                break
+            except OSError:
+                if server_socket:
+                    server_socket.close()
+                    
+        if not bound:
+            print("❌ Failed to bind listener socket after 5 attempts.")
+            return
+
+        try:
             while self.is_listening:
                 try:
                     conn, addr = server_socket.accept()
-                    with conn:
+                    try:
                         data = conn.recv(1024).decode('utf-8')
-                        if not data: continue
-                        
-                        message = json.loads(data)
-                        label = message.get('LABEL')
+                        if data:
+                            message = json.loads(data)
+                            label = message.get('LABEL')
 
-                        # --- EXISTING ACCOUNT LOGIC ---
-                        if label == 'ACCOUNT_UPDATE':
-                            state_manager.update_account_state(
-                                balance=message.get('ACCOUNT_VALUE', 0.0),
-                                pnl=message.get('DAILY_PNL', 0.0),
-                                sync_time=datetime.now()
-                            )
+                            # --- EXISTING ACCOUNT LOGIC ---
+                            if label == 'ACCOUNT_UPDATE':
+                                state_manager.update_account_state(
+                                    balance=message.get('ACCOUNT_VALUE', 0.0),
+                                    pnl=message.get('DAILY_PNL', 0.0),
+                                    sync_time=datetime.now()
+                                )
 
-                        # --- NEW TAPE SCANNER LOGIC ---
-                        elif label == 'TRADE':
-                            # Use the local scanner reference
-                            if self.scanner:
-                                symbol = message.get('SYMBOL')
-                                size = message.get('SIZE')
-                                side = message.get('SIDE')
-                                
-                                # Feed the Squawk Box
-                                self.scanner.add_trade(symbol, time.time(), size, side)
-                                self.scanner.detect_rhythmic_patterns(symbol)
+                            # --- NEW TAPE SCANNER LOGIC ---
+                            elif label == 'TRADE':
+                                if self.scanner:
+                                    symbol = message.get('SYMBOL')
+                                    size = message.get('SIZE')
+                                    side = message.get('SIDE')
+                                    self.scanner.add_trade(symbol, time.time(), size, side)
+                                    self.scanner.detect_rhythmic_patterns(symbol)
 
-                        # --- NEW RETURN PATH FOR FILLS ---
-                        elif label == 'ORDER_FILL':
-                            print(f"--- ORDER FILL RECEIVED: {message} ---")
-                            position_data = {
-                                'symbol': message.get('SYMBOL'),
-                                'quantity': message.get('QUANTITY'),
-                                'entry_price': message.get('PRICE'),
-                                'type': f"{message.get('SIDE').upper()}_SIGNAL", # e.g. BUY_SIGNAL
-                                'signal_timestamp': time.time() # Use current time as entry time
-                            }
-                            state_manager.add_position(position_data)
-                            print(f"--- ACTIVE POSITION UPDATED: {position_data['symbol']} ---")
-                                
-                except json.JSONDecodeError:
-                    pass
+                            # --- NEW RETURN PATH FOR FILLS ---
+                            elif label == 'ORDER_FILL':
+                                print(f"--- ORDER FILL RECEIVED: {message} ---")
+                                position_data = {
+                                    'symbol': message.get('SYMBOL'),
+                                    'quantity': message.get('QUANTITY'),
+                                    'entry_price': message.get('PRICE'),
+                                    'type': f"{message.get('SIDE').upper()}_SIGNAL",
+                                    'signal_timestamp': time.time()
+                                }
+                                state_manager.add_position(position_data)
+                                print(f"--- ACTIVE POSITION UPDATED: {position_data['symbol']} ---")
+                    except json.JSONDecodeError:
+                        pass
+                    finally:
+                        conn.close()
                 except Exception as e:
                     if self.is_listening:
                         print(f"Error in listener thread: {e}")
+        finally:
+            if server_socket:
+                server_socket.close()
 
     def get_wallet_balance(self):
         """
@@ -122,10 +138,14 @@ class NTFuturesAdapter:
             print(f"Contract for symbol {symbol} not found.")
             return None
 
-        target_port = 36999 if symbol == 'MES' else 37000
+        base_port = 36999 if symbol == 'MES' else 37000
 
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        for offset in range(5):
+            target_port = base_port + offset
+            s = None
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.settimeout(1)
                 s.connect((self.host, target_port))
                 s.sendall(f"GET_PRICE|{symbol}".encode())
@@ -136,12 +156,19 @@ class NTFuturesAdapter:
                     # --- THE FIX: Update your sensors before returning the price ---
                     self.update_indicators(symbol, price)
                     return price
+                return None
+            except OSError as e:
+                if offset == 4:
+                    print(f"❌ Socket Error ({symbol} on port {target_port}): {e}") 
+            except Exception as e:
+                if offset == 4:
+                    print(f"❌ Error ({symbol} on port {target_port}): {e}")
+            finally:
+                if s:
+                    s.close()
                     
-            return None
-        except Exception as e:
-            print(f"❌ Socket Error ({symbol} on port {target_port}): {e}") 
-            # Fallback to a baseline if the socket is momentarily busy
-            return 6612.50 if symbol == 'MES' else 18000.00
+        # Fallback to a baseline if the socket is momentarily busy
+        return 6612.50 if symbol == 'MES' else 18000.00
 
     def get_market_depth(self, symbol):
         """
@@ -208,19 +235,27 @@ class NTFuturesAdapter:
 
     def _send_order_to_nt(self, side, symbol, quantity):
         """Connects to the MidasBridge on the correct port and sends a market order command."""
-        target_port = 36999 if symbol == 'MES' else 37000
+        base_port = 36999 if symbol == 'MES' else 37000
         command = f"PLACE_ORDER|{side}|{symbol}|{quantity}"
         
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        for offset in range(5):
+            target_port = base_port + offset
+            s = None
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.settimeout(2) # 2-second timeout
                 s.connect((self.host, target_port))
                 s.sendall(command.encode())
                 print(f"✅ Sent to NT8 on port {target_port}: {command}")
-            return True
-        except Exception as e:
-            print(f"❌ Socket Error on port {target_port} sending '{command}': {e}")
-            return False
+                return True
+            except Exception as e:
+                if offset == 4:
+                    print(f"❌ Socket Error on port {target_port} sending '{command}': {e}")
+            finally:
+                if s:
+                    s.close()
+        return False
 
     def execute_buy(self, symbol, size, price, signal_id=None):
         """

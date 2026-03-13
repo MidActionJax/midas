@@ -18,6 +18,34 @@ class MidasEngine(threading.Thread):
         self.scanner = TapeScanner()
         self.price_buffer = {symbol: [] for symbol in symbols}
         self.last_bar_time = {symbol: time.time() for symbol in symbols}
+        self.is_paused = False
+        self.analysis_timer = 0
+
+    def flatten_all(self):
+        print("!!! EMERGENCY KILL SWITCH ACTIVATED - FLATTENING ALL POSITIONS !!!")
+        self.is_paused = True
+        if not self.adapter:
+            return
+            
+        tracked_positions = state.state_manager.get_active_positions()
+        for pos in list(tracked_positions):
+            if pos.get('exit_triggered'):
+                continue
+                
+            pos_symbol = pos.get('symbol', '').upper()
+            raw_type = pos.get('type', 'BUY').upper()
+            pos_type = 'LONG' if 'BUY' in raw_type else 'SHORT'
+            current_price = self.adapter.get_current_price(pos_symbol)
+            
+            if current_price:
+                try:
+                    if pos_type == 'LONG':
+                        self.adapter.execute_sell(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                    else:
+                        self.adapter.execute_buy(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                    pos['exit_triggered'] = True
+                except Exception as ex:
+                    print(f"Error executing kill switch exit: {ex}")
 
     def manage_positions(self):
         """Monitors active positions, updates PnL, and logs closed trades."""
@@ -131,10 +159,21 @@ class MidasEngine(threading.Thread):
                     # --- Manage existing positions first ---
                     self.manage_positions()
 
+                    if self.is_paused:
+                        time.sleep(1)
+                        continue
+
                     # --- Cooldown period after a trade ---
                     if time.time() - self.last_trade_time < 300: # 5-minute cooldown
                         time.sleep(1)
                         continue
+                    
+                    self.analysis_timer += 1
+                    if self.analysis_timer < 5:
+                        time.sleep(1)
+                        continue
+                    
+                    self.analysis_timer = 0
                     
                     # --- Process each symbol ---
                     for symbol in self.symbols:
@@ -178,21 +217,49 @@ class MidasEngine(threading.Thread):
                             market_depth = self.adapter.get_market_depth(symbol)
                             state.state_manager.set_market_data(symbol, market_depth)
 
-                            # Pass the entire price history map to the logic function
-                            signal = logic.analyze_order_book(symbol, market_depth, state.state_manager.price_history, self.adapter)
+                            # --- STRATEGY MANAGER ---
+                            chop_index = state.state_manager.current_chop_index
+                            signal = None
+
+                            if chop_index > 61.8:
+                                # Ranging Market -> Mean Reversion
+                                print(f"--- REGIME: RANGING ({chop_index:.2f}) -> Activating Mean Reversion Strategy ---")
+                                signal = logic.analyze_mean_reversion(
+                                    symbol,
+                                    market_depth,
+                                    state.state_manager.price_history.get(symbol, []),
+                                    chop_index
+                                )
+                            elif chop_index < 38.2:
+                                # Trending Market -> Breakout
+                                print(f"--- REGIME: TRENDING ({chop_index:.2f}) -> Activating Breakout Strategy ---")
+                                signal = logic.analyze_breakout(
+                                    symbol,
+                                    market_depth,
+                                    state.state_manager.price_history.get(symbol, []),
+                                    chop_index
+                                )
+                            else:  # 38.2 <= chop_index <= 61.8
+                                # Standard/Choppy Market -> Iceberg
+                                print(f"--- REGIME: STANDARD ({chop_index:.2f}) -> Activating Iceberg Strategy ---")
+                                signal = logic.analyze_order_book(
+                                    symbol, market_depth, state.state_manager.price_history, self.adapter
+                                )
+
                             if signal:
                                 pending_signals = state.state_manager.get_pending_signals()
                                 is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
                                 
                                 if not is_duplicate:
                                     state.state_manager.add_pending_signal(signal)
+                                    reason = signal.get('reason', 'Unknown')
                                     confidence_score_str = f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)'
-                                    print(f"!!! NEW SIGNAL DETECTED: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
+                                    print(f"!!! NEW SIGNAL [{reason}]: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
             
-            time.sleep(5)
+            time.sleep(1)
         
         print("MidasEngine stopped.")
 
