@@ -144,6 +144,20 @@ def status():
     except Exception as e:
         print(f"Error generating execution log: {e}")
 
+    # Calculate Correlation Score
+    correlation_score = 0.0
+    try:
+        mes_hist = state.state_manager.price_history.get('MES', [])[-50:]
+        mnq_hist = state.state_manager.price_history.get('MNQ', [])[-50:]
+        if len(mes_hist) >= 20 and len(mnq_hist) >= 20:
+            min_len = min(len(mes_hist), len(mnq_hist))
+            df_corr = pd.DataFrame({'MES': mes_hist[-min_len:], 'MNQ': mnq_hist[-min_len:]})
+            corr_val = df_corr['MES'].corr(df_corr['MNQ'])
+            if pd.notna(corr_val):
+                correlation_score = float(corr_val)
+    except Exception as e:
+        print(f"Error calculating correlation: {e}")
+
     status_data = {
         'active': False,
         'price': "N/A",
@@ -172,7 +186,8 @@ def status():
         'sizing_mode': sizing_mode,
         'execution_log': execution_log,
         'dev_mode': state.state_manager.dev_mode,
-        'chop_index': state.state_manager.current_chop_index
+        'chop_index': state.state_manager.current_chop_index,
+        'correlation_score': correlation_score
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
@@ -374,6 +389,28 @@ def retrain():
     success = brain.retrain_model()
     # TODO: Add flash messaging to tell the user if it succeeded
     return redirect(url_for('index'))
+
+@app.route('/api/equity')
+@login_required
+def get_equity():
+    try:
+        if not os.path.exists('trade_history.csv'):
+            return jsonify([])
+        df = pd.read_csv('trade_history.csv')
+        df['final_pnl'] = pd.to_numeric(df['final_pnl'], errors='coerce')
+        df = df.dropna(subset=['final_pnl'])
+        if df.empty:
+            return jsonify([])
+        
+        df = df.sort_values(by='timestamp_id')
+        df['cumulative_pnl'] = df['final_pnl'].cumsum()
+        
+        equity_data = [{'time': float(row['timestamp_id']) * 1000, 'balance': float(row['cumulative_pnl'])} for _, row in df.iterrows()]
+            
+        return jsonify(equity_data)
+    except Exception as e:
+        print(f"Error fetching equity data: {e}")
+        return jsonify([])
 
 @app.route('/logout')
 @login_required

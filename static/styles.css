@@ -1,0 +1,160 @@
+/* PROJECT MIDAS: HIGH-FIDELITY CYBER-TERMINAL (FULL UNIFIED SCRIPT)
+    Theme: Midas Gold & Neon Pink Overhaul
+    Palette: Gold (#FFD700), Neon Pink (#FF0055), Purple (#9d00ff), Matrix Green (#00FF41)
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;500;700&display=swap');
+
+:root {
+    --bg-black: #000000;
+    --cyber-pink: #ff0055;   /* Punchier Neon Pink */
+    --cyber-purple: #9d00ff;
+    --matrix-green: #00FF41;
+    --neon-red: #FF3131;
+    --midas-gold: #FFD700;   /* Midas Gold Accent */
+    --glass-bg: rgba(15, 15, 15, 0.85);
+    --glass-border: rgba(255, 0, 85, 0.4); /* Pink Glow Border */
+}
+
+/* ===== 1. CORE ENGINE & SCANLINES ===== */
+body {
+    font-family: 'Roboto Mono', monospace !important;
+    background-color: var(--bg-black) !important;
+    background-image: 
+        radial-gradient(at 10% 10%, rgba(157, 0, 255, 0.1) 0px, transparent 40%),
+        radial-gradient(at 90% 90%, rgba(255, 0, 85, 0.1) 0px, transparent 40%);
+    color: #f0f0f0;
+    min-height: 100vh;
+    margin: 0;
+}
+
+/* CRT Scanline Overlay */
+body::before {
+    content: " ";
+    display: block;
+    position: fixed;
+    top: 0; left: 0; bottom: 0; right: 0;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%), 
+                linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.04));
+    z-index: 9999;
+    background-size: 100% 4px, 3px 100%;
+    pointer-events: none;
+    opacity: 0.3;
+}
+
+/* ===== 2. THE GOLDEN TOUCH (Header) ===== */
+.content-header h1 {
+    color: var(--midas-gold) !important;
+    text-shadow: 
+        0 0 10px rgba(255, 215, 0, 0.7), 
+        0 0 20px rgba(255, 215, 0, 0.4),
+        0 0 40px rgba(255, 215, 0, 0.2) !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 5px;
+    margin-top: 20px;
+    transition: all 0.5s ease-in-out;
+}
+
+/* Subtext Purple Glow */
+.text-muted {
+    color: var(--cyber-purple) !important;
+    text-shadow: 0 0 5px var(--cyber-purple);
+}
+
+/* ===== 3. BOOTSTRAP HIJACK (Neon Glows) ===== */
+
+/* Override yellow to Cyber Pink */
+.text-warning { 
+    color: var(--cyber-pink) !important; 
+    text-shadow: 0 0 10px var(--cyber-pink);
+    font-weight: 700;
+}
+
+/* Override Info to Cyber Purple */
+.text-info { 
+    color: var(--cyber-purple) !important; 
+    text-shadow: 0 0 10px var(--cyber-purple);
+}
+
+/* Standard Success Glow */
+.text-success { 
+    color: var(--matrix-green) !important; 
+    text-shadow: 0 0 8px var(--matrix-green);
+}
+
+/* Force Cards to Glassmorphism with Smooth Ease-in */
+.card.bg-dark {
+    background: var(--glass-bg) !important;
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1.5px solid var(--glass-border) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+    /* SMOOTH WEIGHTED TRANSITION */
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                box-shadow 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                border-color 0.4s ease-in-out !important;
+}
+
+.card.bg-dark:hover {
+    transform: translateY(-5px);
+    border-color: var(--cyber-pink) !important;
+    box-shadow: 0 0 30px rgba(255, 0, 85, 0.5), inset 0 0 10px rgba(255, 0, 85, 0.2) !important;
+}
+
+.card-header {
+    background: rgba(255, 0, 85, 0.1) !important;
+    border-bottom: 1px solid var(--glass-border) !important;
+    color: var(--cyber-pink) !important;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 2px;
+}
+
+/* ===== 4. BUTTONS & UI ELEMENTS ===== */
+
+/* Emergency Kill Switch */
+button[onclick="triggerKillSwitch()"] {
+    background-color: var(--neon-red) !important;
+    border: none !important;
+    color: white !important;
+    box-shadow: 0 0 15px var(--neon-red);
+    animation: kill-pulse 2s infinite ease-in-out;
+}
+
+@keyframes kill-pulse {
+    0% { transform: scale(1); box-shadow: 0 0 5px var(--neon-red); }
+    50% { transform: scale(1.01); box-shadow: 0 0 20px var(--neon-red); }
+    100% { transform: scale(1); box-shadow: 0 0 5px var(--neon-red); }
+}
+
+/* Start Engine */
+.btn-success {
+    background: transparent !important;
+    border: 1px solid var(--matrix-green) !important;
+    color: var(--matrix-green) !important;
+    border-radius: 0 !important;
+    transition: all 0.3s ease;
+}
+.btn-success:hover {
+    background: var(--matrix-green) !important;
+    color: black !important;
+    box-shadow: 0 0 15px var(--matrix-green);
+}
+
+/* Stop Engine - Force Neon Red */
+.btn-danger {
+    background: transparent !important;
+    border: 1px solid var(--neon-red) !important;
+    color: var(--neon-red) !important;
+    border-radius: 0 !important;
+    transition: all 0.3s ease;
+}
+.btn-danger:hover {
+    background: var(--neon-red) !important;
+    color: white !important;
+    box-shadow: 0 0 20px var(--neon-red);
+}
+
+/* Retrain Button Pink

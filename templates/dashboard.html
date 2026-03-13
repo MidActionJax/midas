@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Project Midas</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #212529; }
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+    <!-- <style>
         .signal-card { border-left: 5px solid #ffc107; }
         .table-container { max-height: 400px; overflow-y: auto; }
         .live-mode { border: 3px solid #dc3545 !important; }
@@ -17,7 +18,7 @@
         .glow {
             animation: glow 1.5s infinite ease-in-out;
         }
-    </style>
+    </style> -->
 </head>
 <body>
     <audio id="ping-sound" src="https://www.soundjay.com/buttons/sounds/button-16.mp3" preload="auto"></audio>
@@ -26,7 +27,9 @@
             <strong>CRITICAL: DAILY DRAWDOWN LIMIT REACHED. TRADING SUSPENDED.</strong>
         </div>
 
-        <h1 class="text-center text-warning">Project Midas</h1>
+        <div class="content-header">
+            <h1 class="text-center">Project Midas</h1>
+        </div>
         <p class="text-center text-muted">Order Flow "Grey Box" System</p>
 
         <!-- HUD Row -->
@@ -80,6 +83,14 @@
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
 
+        <!-- Equity Growth Chart -->
+        <div class="glass-panel mb-4 p-3" style="border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; background: rgba(0,0,0,0.5);">
+            <h5 style="color: #00FF41; text-shadow: 0 0 5px #00FF41; margin-bottom: 15px;">Equity Growth</h5>
+            <div style="height: 250px; width: 100%;">
+                <canvas id="equityChart"></canvas>
+            </div>
+        </div>
+
         <div class="card text-white bg-dark border-secondary mb-4">
             <div class="card-header">Performance Scorecard</div>
             <div class="card-body">
@@ -123,6 +134,15 @@
                     <p>Realized PnL: <span id="pnl" class="text-light">$0.00</span></p>
                     <p>Open Positions: <span id="open-positions" class="text-info">0</span></p>
                     <p>Chop Index: <span id="chop-index" class="text-light">50.0</span></p>
+                    
+                    <!-- MARKET SYNC METER -->
+                    <div class="mb-3" title="High sync = Strong trend reliability. Divergence = Potential chop warning.">
+                        <span>MARKET SYNC: <span id="sync-score" class="fw-bold">0.00</span></span>
+                        <div class="progress mt-1 bg-dark" style="height: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                            <div id="sync-meter-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
                     <p>
                         Current Price (<span id="symbol">BTC/USDT</span>): <span id="price" class="text-warning">N/A</span>
                         <span id="nasdaq-ema-container" style="display: none;">| MNQ EMA: <span id="nasdaq-ema" class="text-info">N/A</span></span>
@@ -315,6 +335,29 @@
                     // Chop Index
                     chopIndexEl.textContent = data.chop_index.toFixed(2);
                     
+                    // Market Sync Meter
+                    const syncScore = data.correlation_score || 0;
+                    const syncScoreEl = document.getElementById('sync-score');
+                    const syncMeterBar = document.getElementById('sync-meter-bar');
+                    
+                    syncScoreEl.textContent = syncScore.toFixed(2);
+                    const syncPercent = Math.min(100, Math.max(0, syncScore * 100));
+                    syncMeterBar.style.width = syncPercent + '%';
+                    
+                    if (syncScore >= 0.8) {
+                        syncMeterBar.style.backgroundColor = '#00FF41'; // Matrix Green
+                        syncMeterBar.style.boxShadow = '0 0 10px #00FF41';
+                        syncScoreEl.style.color = '#00FF41';
+                    } else if (syncScore >= 0.4) {
+                        syncMeterBar.style.backgroundColor = '#FFD700'; // Midas Gold
+                        syncMeterBar.style.boxShadow = '0 0 10px #FFD700';
+                        syncScoreEl.style.color = '#FFD700';
+                    } else {
+                        syncMeterBar.style.backgroundColor = '#FF073A'; // Neon Red
+                        syncMeterBar.style.boxShadow = '0 0 10px #FF073A';
+                        syncScoreEl.style.color = '#FF073A';
+                    }
+                    
                     // 2. HUD and PnL
                     const formatCurrency = (val, isMainBalance = false) => {
                         const numericVal = parseFloat(val);
@@ -493,6 +536,70 @@
         // Run every 1 second
         setInterval(updateStatus, 1000);
         document.addEventListener('DOMContentLoaded', updateStatus);
+
+        // Equity Growth Chart Logic
+        let equityChart;
+
+        async function updateEquityChart() {
+            try {
+                const response = await fetch('/api/equity');
+                const data = await response.json();
+
+                const labels = data.map(d => {
+                    const date = new Date(d.time);
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                });
+                const values = data.map(d => d.balance);
+
+                if (equityChart) {
+                    equityChart.data.labels = labels;
+                    equityChart.data.datasets[0].data = values;
+                    equityChart.update();
+                } else {
+                    const canvas = document.getElementById('equityChart');
+                    if (!canvas) return; 
+                    
+                    const ctx = canvas.getContext('2d');
+                    let gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight);
+                    gradient.addColorStop(0, 'rgba(0, 255, 65, 0.4)'); 
+                    gradient.addColorStop(1, 'rgba(0, 255, 65, 0.0)'); 
+
+                    equityChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Cumulative PnL ($)',
+                                data: values,
+                                borderColor: '#00FF41',
+                                backgroundColor: gradient,
+                                borderWidth: 2,
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 0,
+                                pointHoverRadius: 6,
+                                pointHoverBackgroundColor: '#00FF41',
+                                pointHoverBorderColor: '#fff',
+                                pointHoverBorderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#888' } },
+                                y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#888' } }
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error("Error updating equity chart:", error);
+            }
+        }
+        updateEquityChart();
+        setInterval(updateEquityChart, 60000);
 
         // Master Switcher Listener
         document.getElementById('master-switch').addEventListener('change', function(e) {
