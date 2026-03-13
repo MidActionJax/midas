@@ -28,11 +28,11 @@
 - [x] **GAN Data Generation**: Use Generative Adversarial Networks to create "synthetic" historical data for stress testing against trillions of hours of black-swan scenarios.
 - [ ] **Self-Correction Logic**: Enable the RL agent to re-train itself as market conditions change over time.
 
-## 🟡 Sprint 13: The "Midas" Terminal Overhaul
+## 🟢 Sprint 13: The "Midas" Terminal Overhaul
 **Goal**: Transform the current "mad ugly" interface into a professional, high-fidelity cybersecurity-themed trading desk.
-- [ ] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that aligns with your Shrood branding.
-- [ ] **Interactive Equity Curve**: Integrate Chart.js to plot a live, functional line graph of your account balance growth over time.
-- [ ] **Correlation Heatmap**: Add a visual "Sync Meter" to show real-time correlation between the S&P (MES) and Nasdaq (MNQ) over the last hour.
+- [x] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that aligns with your Shrood branding.
+- [x] **Interactive Equity Curve**: Integrate Chart.js to plot a live, functional line graph of your account balance growth over time.
+- [x] **Correlation Heatmap**: Add a visual "Sync Meter" to show real-time correlation between the S&P (MES) and Nasdaq (MNQ) over the last hour.
 
 ---
 
