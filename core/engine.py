@@ -1,6 +1,7 @@
 import threading
 import time
 import config
+import pandas as pd
 from adapters.paper_crypto import PaperCryptoAdapter
 from adapters.paper_futures import PaperFuturesAdapter
 from adapters.nt_futures import NTFuturesAdapter # Add this line
@@ -15,6 +16,8 @@ class MidasEngine(threading.Thread):
         self.adapter = None
         self.last_trade_time = 0
         self.scanner = TapeScanner()
+        self.price_buffer = {symbol: [] for symbol in symbols}
+        self.last_bar_time = {symbol: time.time() for symbol in symbols}
 
     def manage_positions(self):
         """Monitors active positions, updates PnL, and logs closed trades."""
@@ -24,43 +27,81 @@ class MidasEngine(threading.Thread):
         try:
             live_positions = self.adapter.get_open_positions()
             tracked_positions = state.state_manager.get_active_positions()
-
-            live_map = { (p.get('symbol'), p.get('type')): p for p in live_positions }
             
-            # Use a copy for safe iteration while removing
             for pos in list(tracked_positions):
-                pos_type = 'LONG' if 'BUY' in pos.get('type', 'BUY_SIGNAL') else 'SHORT'
-                key = (pos.get('symbol'), pos_type)
+                # 🚨 THE GHOST EXORCIST 🚨
+                # The NT adapter pushes raw duplicates ('BUY_SIGNAL') into our memory on every fill.
+                # We ONLY want to track the rich position ('BUY') that we created in app.py.
+                if 'SIGNAL' in pos.get('type', '').upper():
+                    state.state_manager.remove_position(pos)
+                    continue
 
-                if key in live_map:
-                    # Position is still open, update its PnL in our state.
-                    # This requires a new method in StateManager or re-adding the position.
-                    # For simplicity, we'll just add the PNL to the dictionary that we will process later.
-                    live_pnl = live_map[key].get('pnl', 0.0)
-                    pos['unrealized_pnl'] = live_pnl
+                pos_symbol = pos.get('symbol', '').upper()
+                raw_type = pos.get('type', 'BUY').upper()
+                pos_type = 'LONG' if 'BUY' in raw_type else 'SHORT'
+                
+                # --- THE ULTIMATE FUZZY MATCH ---
+                match = None
+                for lp in live_positions:
+                    lp_string = str(lp).upper() 
+                    if pos_symbol in lp_string:
+                        if pos_type == 'LONG' and ('LONG' in lp_string or 'BUY' in lp_string):
+                            match = lp
+                            break
+                        elif pos_type == 'SHORT' and ('SHORT' in lp_string or 'SELL' in lp_string):
+                            match = lp
+                            break
+
+                if match:
+                    # 🚨 THE SAFETY CATCH 🚨
+                    if pos.get('exit_triggered'):
+                        continue
+
+                    # --- POSITION IS OPEN: MONITOR FOR EXIT ---
+                    pos['unrealized_pnl'] = match.get('pnl', match.get('unrealizedPnl', 0.0))
+                    
+                    current_price = self.adapter.get_current_price(pos_symbol)
+                    entry_price = pos.get('entry_price')
+                    
+                    if current_price and entry_price:
+                        target = 1.50 # Keep your 2-tick test value
+                        is_long = pos_type == 'LONG'
+                        
+                        hit_tp = (is_long and current_price >= entry_price + target) or \
+                                 (not is_long and current_price <= entry_price - target)
+                        hit_sl = (is_long and current_price <= entry_price - target) or \
+                                 (not is_long and current_price >= entry_price + target)
+                                 
+                        if hit_tp or hit_sl:
+                            side = 'SELL' if is_long else 'BUY'
+                            print(f"!!! SNIPER TRIGGERED: Closing {pos_symbol} at {current_price} !!!")
+                            
+                            try:
+                                if side == 'SELL':
+                                    self.adapter.execute_sell(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                                else:
+                                    self.adapter.execute_buy(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                                
+                                # Tag the position so it doesn't machine-gun NinjaTrader
+                                pos['exit_triggered'] = True 
+                            except Exception as ex:
+                                print(f"Error executing auto-exit: {ex}")
                 else:
-                    # --- DEV MODE STABILITY ---
-                    if state.state_manager.dev_mode:
-                        entry_time = pos.get('signal_timestamp', 0)
-                        if time.time() - entry_time < 30:
-                            print(f"--- DEV MODE: Delaying exit detection for {pos['symbol']} ---")
-                            continue # Skip exit logic for 30 seconds
+                    # --- BULLETPROOF GRACE PERIOD ---
+                    entry_time = pos.get('timestamp', time.time())
+                    if time.time() - entry_time < 15:
+                        continue 
 
-                    # Position is closed.
                     final_pnl = pos.get('unrealized_pnl', 0.0)
-                    reason = "Exit Detected" # We don't know the exact reason (TP/SL) from this logic.
-
-                    # Log the exit to the CSV
-                    logger.log_trade_exit(pos['signal_timestamp'], final_pnl, reason)
-
-                    # Update the global realized PnL
+                    sig_id = pos.get('signal_timestamp')
+                    
+                    if sig_id:
+                        logger.log_trade_exit(sig_id, final_pnl, "Exit Detected")
+                    
                     state.state_manager.add_pnl(final_pnl)
-
-                    # Remove from state manager's active list
                     state.state_manager.remove_position(pos)
                     
-                    print(f"--- DETECTED CLOSED POSITION: {pos['symbol']} | PnL: {final_pnl} ---")
-                    # Set cooldown to prevent immediate re-entry
+                    print(f"--- TRADE CLOSED: {pos_symbol} | PnL: ${final_pnl} ---")
                     self.last_trade_time = time.time()
         except Exception as e:
             print(f"Error in manage_positions: {e}")
@@ -104,6 +145,33 @@ class MidasEngine(threading.Thread):
                             
                         print(f"HEARTBEAT: Price of {symbol} is {price}")
                         state.state_manager.add_price(symbol, price)
+                        self.price_buffer[symbol].append(price)
+
+                        # --- Bar Creation and Choppiness Index Calculation ---
+                        current_time = time.time()
+                        if current_time - self.last_bar_time[symbol] >= 60:
+                            if self.price_buffer[symbol]:
+                                # Create OHLC bar
+                                bar = {
+                                    'open': self.price_buffer[symbol][0],
+                                    'high': max(self.price_buffer[symbol]),
+                                    'low': min(self.price_buffer[symbol]),
+                                    'close': self.price_buffer[symbol][-1]
+                                }
+                                state.state_manager.price_bars[symbol].append(bar)
+                                state.state_manager.price_bars[symbol] = state.state_manager.price_bars[symbol][-200:]
+                                
+                                # Calculate Choppiness Index
+                                if len(state.state_manager.price_bars[symbol]) >= 14:
+                                    df = pd.DataFrame(state.state_manager.price_bars[symbol])
+                                    chop_index = logic.calculate_choppiness_index(df)
+                                    state.state_manager.current_chop_index = chop_index
+                                    print(f"--- CHOP INDEX (MES): {chop_index:.2f} ---")
+
+                                # Reset for next bar
+                                self.price_buffer[symbol] = []
+                                self.last_bar_time[symbol] = current_time
+
 
                         # Only perform deep analysis for the execution symbol (MES)
                         if symbol == 'MES':

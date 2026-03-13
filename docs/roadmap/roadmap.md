@@ -170,3 +170,4 @@ The Intelligence: We feed that flag into the Truth Engine. The ML model will the
 - 3 months of data
 - Lower thresholds
 - check buying/selling?
+- Kill switch, close all positions on dashboard

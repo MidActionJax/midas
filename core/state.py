@@ -16,6 +16,7 @@ class StateManager:
         self.realized_pnl = 0.0
         self.trade_history = []
         self.price_history = {'MES': [], 'MNQ': []}
+        self.price_bars = {'MES': [], 'MNQ': []}
         self.ema_val = {'MES': None, 'MNQ': None}
         self.detected_whales = []
         self.whale_activity = {}
@@ -33,6 +34,7 @@ class StateManager:
         self.live_wins = 0
         self.live_trades = 0
         self.dev_mode = False # Add dev_mode
+        self.current_chop_index = 50.0
         self.state_file = state_file
         self.load_price_history()
 
@@ -104,10 +106,14 @@ class StateManager:
     def remove_pending_signal(self, signal_to_remove):
         with self._lock:
             # Rebuilding list without the removed signal
-            self.pending_signals = [s for s in self.pending_signals if s['timestamp'] != signal_to_remove['timestamp']]
+            target_id = str(signal_to_remove['timestamp'])
+            self.pending_signals = [s for s in self.pending_signals if str(s['timestamp']) != target_id]
 
     def add_position(self, pos):
         with self._lock:
+            # Ensure signal_timestamp is a string for consistency
+            if 'signal_timestamp' in pos:
+                pos['signal_timestamp'] = str(pos['signal_timestamp'])
             self.active_positions.append(pos)
 
     def remove_position(self, pos):
