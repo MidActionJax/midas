@@ -87,20 +87,20 @@ This roadmap outlines the lifecycle of Project Midas, transitioning it from a ba
 
 ## 🟢 Sprint 9: Real-Time Sync & Live Controls (CURRENT)
 **Goal**: Connect the dashboard to your actual financial data and enable "One-Click" mode switching.
-- [ ] **Live Balance & PnL Sync**: Expand the C# MidasBridge to push your actual NinjaTrader account balance and daily PnL across the socket to the Python adapter.
-- [ ] **The "Master Switch"**: Add a toggle on the dashboard to seamlessly switch between "Paper" and "Live" (NT_FUTURES) modes without manually editing backend config files.
-- [ ] **Performance Audit HUD**: Add a visual "Daily Scorecard" specifically tracking wins, losses, and profit for the current 24-hour window.
-- [ ] **Execution Logger**: Expand the dashboard to show the last 10 trades with specific details on why they were closed (e.g., Hit Take Profit vs. Stop Loss).
-- [ ] **Account-Aware Position Sizing**: Logic that checks your actual NinjaTrader balance. If you have $50, it strictly buys 1 contract; as your balance grows, it scales up automatically.
-- [] **Hybrid Position Sizing**: Add a UI toggle on the dashboard to switch between "Fixed" (manually locking trade size to 1, 2, etc. contracts) and "Auto" (the engine dynamically scales contract size up or down based on your live NinjaTrader margin balance).
+- [x] **Live Balance & PnL Sync**: Expand the C# MidasBridge to push your actual NinjaTrader account balance and daily PnL across the socket to the Python adapter.
+- [x] **The "Master Switch"**: Add a toggle on the dashboard to seamlessly switch between "Paper" and "Live" (NT_FUTURES) modes without manually editing backend config files.
+- [x] **Performance Audit HUD**: Add a visual "Daily Scorecard" specifically tracking wins, losses, and profit for the current 24-hour window.
+- [x] **Execution Logger**: Expand the dashboard to show the last 10 trades with specific details on why they were closed (e.g., Hit Take Profit vs. Stop Loss).
+- [x] **Account-Aware Position Sizing**: Logic that checks your actual NinjaTrader balance. If you have $50, it strictly buys 1 contract; as your balance grows, it scales up automatically.
+- [x] **Hybrid Position Sizing**: Add a UI toggle on the dashboard to switch between "Fixed" (manually locking trade size to 1, 2, etc. contracts) and "Auto" (the engine dynamically scales contract size up or down based on your live NinjaTrader margin balance).
 
 ---
 
-## 🟡 Sprint 10: The "Midas" Terminal Overhaul (CURRENT)
+## 🟢 Sprint 10: The "Midas" Terminal Overhaul (CURRENT)
 **Goal**: Transform the current "mad ugly" interface into a professional, high-fidelity trading desk.
-- [ ] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that matches your Shrood branding.
-- [ ] **Interactive Equity Curve**: Integrate Chart.js to plot a live line graph of your account balance growth over time.
-- [ ] **Correlation Heatmap**: Add a visual "Sync Meter" showing exactly how closely the S&P and Nasdaq have been correlated over the last hour.
+- [x] **Dark Mode Cyber-Aesthetic**: Redesign the UI with a sleek, dark "Cybersecurity" theme that matches your Shrood branding.
+- [x] **Interactive Equity Curve**: Integrate Chart.js to plot a live line graph of your account balance growth over time.
+- [x] **Correlation Heatmap**: Add a visual "Sync Meter" showing exactly how closely the S&P and Nasdaq have been correlated over the last hour.
 
 --- 
 
@@ -171,3 +171,4 @@ The Intelligence: We feed that flag into the Truth Engine. The ML model will the
 - Lower thresholds
 - check buying/selling?
 - Kill switch, close all positions on dashboard
+- RuntimeWarning: invalid value encountered in divide

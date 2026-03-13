@@ -35,6 +35,113 @@
 - [x] **Correlation Heatmap**: Add a visual "Sync Meter" to show real-time correlation between the S&P (MES) and Nasdaq (MNQ) over the last hour.
 
 ---
+## 🟡 Sprint 14: Battle-Hardening & "The Great Loosening"
+
+**Goal**: Transition from a "fortress" that never trades to a "predator" that trades with precision and properly logs every exit.
+
+---
+
+### 1. The Communication Audit (The "Decision Trace")
+
+Right now, the bot is a **black box**. If a trade is blocked, you don't know if it was the RL Agent, the ML Confidence, or the Trend Filter.
+
+**The Task:**  
+Build a **Decision Trace** in the logs. When a potential signal is generated, the terminal must print a comprehensive checklist of why it passed or failed.
+
+**Example Output:**
+```
+[SIGNAL GENERATED]: BTC/USDT @ 64500
+[FILTER] Market Regime (Trending): PASS
+[FILTER] ML Truth Engine (82%): PASS
+[FILTER] RL Supervisor: VETO (Reason: High Volatility detected in MNQ)
+```
+
+**The Why:**  
+This stops the confusion. You will see exactly which "guard" is blocking your trades, allowing you to trust the bot's silence.
+
+---
+
+### 2. Threshold Calibration (The "Sweet Spot" Hunt)
+
+Trading once every **72 hours** is too restrictive for a bot of this caliber. We need to move away from hardcoded, rigid rules.
+
+**The Task:**  
+Implement **Dynamic Thresholds** by wiring the **Market Sync score** directly to the entry logic.
+
+**The Logic:**  
+If the **Market Sync > 0.90** (S&P and Nasdaq moving in strong lockstep), the bot automatically lowers the required **ML Confidence from 70% to 60%**.
+
+**The Why:**  
+This allows the bot to be **braver when the market environment is high-probability**, increasing trade frequency without sacrificing quality.
+
+---
+
+### 3. The "Ghost Exit" Fix
+
+You’ve noticed that while `trade_history.csv` updates, the terminal fails to shout `--- EXIT ---` or visually confirm the close on the dashboard.
+
+**The Task:**  
+Perform a targeted update to `engine.py` to ensure the **NinjaTrader Socket Bridge properly handles the `PositionClosed` event**.
+
+**The Goal:**  
+The moment NinjaTrader fills your exit order:
+
+- The dashboard removes the position
+- The terminal prints a clear exit confirmation
+- A summary displays the **final PnL**
+
+---
+
+### 4. Execution Guardrails (The Safety Net)
+
+Since we are **loosening the rules** to capture more trades, we need stronger protection for your capital.
+
+**The Task:**  
+Implement **Auto-Breakeven Logic** and **Trailing Stops**.
+
+**The Logic:**
+
+- If a trade moves **+10 points in your favor**
+- The bot automatically sends a command to NinjaTrader
+- The Stop Loss moves to **+2 points**
+
+**The Why:**  
+This provides the **armor needed for higher trade frequency**, locking in profit even if the market reverses.
+
+Updated Step 4: The High-Frequency Scalp Guardrail
+Instead of hunting for "home runs," we turn Midas into a "base hit" machine.
+
+The Task: Implement Micro-Profit Protectors.
+
+The Logic:
+
+Take Profit (TP): Set to a hard 4 points.
+
+Auto-Breakeven: The moment the trade is up 1.5 points, move the Stop Loss to +0.25 points (covering your commissions/fees).
+
+Trailing Stop: If the price hits 3 points, the stop locks in at 2 points.
+
+The "Why": This aligns perfectly with your "Great Loosening" goal. If we only need 4 points to win, we can trade much more often than if we were waiting for a 10-point miracle.
+
+Your Finalized Sprint 14 Plan (Scalper Edition)
+🟡 Sprint 14: Battle-Hardening & "The Great Loosening"
+Goal: Transition from a "fortress" that never trades to a high-frequency "predator" that locks in small, consistent wins.
+
+1. The Decision Trace (Communication Audit)
+The Task: Build a log checklist that prints every time a signal is generated so you know exactly which filter (ML, RL, or Trend) is blocking a trade.
+
+2. Threshold Calibration (Dynamic Hunting)
+The Task: Implement logic where high Market Sync (>0.90) automatically lowers the required ML Confidence from 70% to 60%, allowing the bot to be "braver" in high-probability environments.
+
+3. The "Ghost Exit" Fix
+The Task: Update engine.py to ensure the NinjaTrader bridge properly handles PositionClosed events so the terminal and dashboard show --- EXIT --- and the final PnL instantly.
+
+4. Micro-Profit Protectors (The Scalper's Guardrail)
+The Task: Add auto-breakeven at 1.5 points and a hard take-profit at 4 points.
+
+The Goal: Guarantee that once we are "in the green," we never let a winning trade turn into a loser.
+
+---
 
 ## 🚀 The Real "Endgame" (Expanded)
 
