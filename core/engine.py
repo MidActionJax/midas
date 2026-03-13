@@ -1,12 +1,15 @@
 import threading
 import time
 import config
+import os
+import numpy as np
 import pandas as pd
 from adapters.paper_crypto import PaperCryptoAdapter
 from adapters.paper_futures import PaperFuturesAdapter
 from adapters.nt_futures import NTFuturesAdapter # Add this line
 from core import state, logic, logger
 from core.logic import TapeScanner
+from stable_baselines3 import PPO
 
 class MidasEngine(threading.Thread):
     def __init__(self, symbols):
@@ -20,6 +23,18 @@ class MidasEngine(threading.Thread):
         self.last_bar_time = {symbol: time.time() for symbol in symbols}
         self.is_paused = False
         self.analysis_timer = 0
+        
+        # Load the RL Model (AI Supervisor)
+        self.rl_model = None
+        model_path = "models/midas_rl_model"
+        if os.path.exists(f"{model_path}.zip"):
+            try:
+                self.rl_model = PPO.load(model_path)
+                print(f"--- RL Agent (AI Supervisor) loaded successfully from {model_path}.zip ---")
+            except Exception as e:
+                print(f"Error loading RL model: {e}")
+        else:
+            print(f"--- Warning: RL model not found at {model_path}.zip. AI Supervisor disabled. ---")
 
     def flatten_all(self):
         print("!!! EMERGENCY KILL SWITCH ACTIVATED - FLATTENING ALL POSITIONS !!!")
@@ -217,8 +232,31 @@ class MidasEngine(threading.Thread):
                             market_depth = self.adapter.get_market_depth(symbol)
                             state.state_manager.set_market_data(symbol, market_depth)
 
-                            # --- STRATEGY MANAGER ---
                             chop_index = state.state_manager.current_chop_index
+
+                            # --- AI SUPERVISOR (RL AGENT) ---
+                            ai_action = 0 # 0=Hold, 1=Buy, 2=Sell
+                            if self.rl_model and len(state.state_manager.price_history.get(symbol, [])) > 0:
+                                current_price = state.state_manager.price_history[symbol][-1]
+                                
+                                ema_200 = current_price
+                                if hasattr(self.adapter, 'current_features') and self.adapter.current_features.get('ema_200_val') is not None:
+                                    ema_200 = self.adapter.current_features.get('ema_200_val')
+                                else:
+                                    calc_ema = logic.calculate_ema(state.state_manager.price_history[symbol], period=200)
+                                    if calc_ema is not None:
+                                        ema_200 = calc_ema
+
+                                atr = logic.get_current_atr(state.state_manager.price_history[symbol])
+                                whale_strength = float(len(state.state_manager.get_active_dominant_whales()))
+
+                                obs = np.array([current_price, ema_200, chop_index, atr, whale_strength], dtype=np.float32)
+                                action, _ = self.rl_model.predict(obs, deterministic=True)
+                                ai_action = int(action)
+                                action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}
+                                print(f"--- AI RECOMMENDS: {action_map.get(ai_action, 'UNKNOWN')} ---")
+
+                            # --- STRATEGY MANAGER ---
                             signal = None
 
                             if chop_index > 61.8:
@@ -247,14 +285,25 @@ class MidasEngine(threading.Thread):
                                 )
 
                             if signal:
-                                pending_signals = state.state_manager.get_pending_signals()
-                                is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
-                                
-                                if not is_duplicate:
-                                    state.state_manager.add_pending_signal(signal)
-                                    reason = signal.get('reason', 'Unknown')
-                                    confidence_score_str = f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)'
-                                    print(f"!!! NEW SIGNAL [{reason}]: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
+                                # --- AI VETO LOGIC ---
+                                vetoed = False
+                                if self.rl_model:
+                                    if signal['type'] == 'BUY_SIGNAL' and ai_action == 2:
+                                        print("!!! AI VETO: RL Agent disagrees with Strategy Manager !!!")
+                                        vetoed = True
+                                    elif signal['type'] == 'SELL_SIGNAL' and ai_action == 1:
+                                        print("!!! AI VETO: RL Agent disagrees with Strategy Manager !!!")
+                                        vetoed = True
+
+                                if not vetoed:
+                                    pending_signals = state.state_manager.get_pending_signals()
+                                    is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
+                                    
+                                    if not is_duplicate:
+                                        state.state_manager.add_pending_signal(signal)
+                                        reason = signal.get('reason', 'Unknown')
+                                        confidence_score_str = f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)'
+                                        print(f"!!! NEW SIGNAL [{reason}]: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")

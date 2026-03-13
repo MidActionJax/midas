@@ -11,6 +11,8 @@ import config
 import time
 import pandas as pd
 import numpy as np
+import threading
+from models.rl_agent import retrain_agent
 
 app = Flask(__name__)
 load_dotenv()
@@ -379,11 +381,42 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
+def evolution_loop():
+    """Background task to retrain the RL agent on real trade data every 24 hours."""
+    while True:
+        time.sleep(86400)  # 24 hours
+        try:
+            print("--- INITIATING EVOLUTION LOOP: Retraining RL Agent ---")
+            if os.path.exists('trade_history.csv'):
+                df = pd.read_csv('trade_history.csv')
+                
+                # Filter for approved trades with a final outcome
+                approved_df = df[(df['user_decision'] == 'APPROVED') & (df['final_pnl'].notna())]
+                
+                if not approved_df.empty:
+                    real_data_df = pd.DataFrame()
+                    real_data_df['price'] = pd.to_numeric(approved_df['price'], errors='coerce')
+                    real_data_df['ema_200'] = pd.to_numeric(approved_df['ema_200_val'], errors='coerce')
+                    real_data_df['chop_index'] = 50.0  # Default value since it's not logged in CSV
+                    real_data_df['atr'] = pd.to_numeric(approved_df['atr_volatility'], errors='coerce')
+                    real_data_df['whale_strength'] = pd.to_numeric(approved_df['whale_strength'], errors='coerce')
+                    
+                    real_data_df = real_data_df.dropna().reset_index(drop=True)
+                    
+                    if not real_data_df.empty:
+                        retrain_agent(real_data_df)
+                        print("--- EVOLUTION COMPLETE: Midas Brain updated with real-world results ---")
+        except Exception as e:
+            print(f"Error during evolution loop: {e}")
+
 from waitress import serve
 if __name__ == '__main__':
     if not os.environ.get('SECRET_KEY') or not os.environ.get('DASHBOARD_PASSWORD'):
         print("FATAL: The SECRET_KEY and DASHBOARD_PASSWORD environment variables must be set.")
     else:
+        # Start the Evolution Loop background task
+        threading.Thread(target=evolution_loop, daemon=True).start()
+        
         # Start the Midas Engine in a separate thread
         core.engine.start_engine()
         # Now, run the Flask app with Waitress

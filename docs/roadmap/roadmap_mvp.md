@@ -14,14 +14,14 @@
 - [x] **The 5th Key (Institutional Sync)**: Integrate these whale detection flags as a high-weight predictive feature for the Truth Engine.
 - [x] **Audio Squawk Notifications**: Add a notification layer that "shouts" or triggers a dashboard alert when a recognized institutional pattern enters the arena.
 
-## 🟡 Sprint 11: Multi-Strategy "Squad" Integration
+## 🟢 Sprint 11: Multi-Strategy "Squad" Integration
 **Goal**: Evolve beyond a "one-trick pony" focused only on Icebergs by integrating adaptive regime logic.
-- [ ] **Market Regime Detection**: Add a "Choppiness Index" to detect if the market is ranging or trending based on ATR and price action.
-- [ ] **Mean Reversion & Breakout Modules**: Build and integrate independent scripts for different strategies to run alongside the Iceberg engine.
-- [ ] **The Strategy Manager**: Implement a manager script to toggle specific strategies on/off based on the detected market regime (e.g., shutting off Trend during ranging periods).
-- [ ] **Risk Smoothing**: Adjust logic to ensure that a bad day for one strategy is balanced by the success of others, smoothing the overall equity curve.
+- [x] **Market Regime Detection**: Add a "Choppiness Index" to detect if the market is ranging or trending based on ATR and price action.
+- [x] **Mean Reversion & Breakout Modules**: Build and integrate independent scripts for different strategies to run alongside the Iceberg engine.
+- [x] **The Strategy Manager**: Implement a manager script to toggle specific strategies on/off based on the detected market regime (e.g., shutting off Trend during ranging periods).
+- [x] **Risk Smoothing**: Adjust logic to ensure that a bad day for one strategy is balanced by the success of others, smoothing the overall equity curve.
 
-## ⚪ Sprint 12: RL Simulator & Synthetic Training
+## 🟡 Sprint 12: RL Simulator & Synthetic Training
 **Goal**: Transition from Software Engineer to AI Researcher by building a "Zero-Human" Alpha.
 - [ ] **The Midas Simulator**: Build a high-fidelity environment where the bot "plays" the market like a video game to learn from mistakes.
 - [ ] **Reward Function Optimization**: Define a points-based system for profit vs. drawdown to guide the Reinforcement Learning (RL) agent.
