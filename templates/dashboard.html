@@ -118,6 +118,7 @@
                     </div>
                     <p>Realized PnL: <span id="pnl" class="text-light">$0.00</span></p>
                     <p>Open Positions: <span id="open-positions" class="text-info">0</span></p>
+                    <p>Chop Index: <span id="chop-index" class="text-light">50.0</span></p>
                     <p>
                         Current Price (<span id="symbol">BTC/USDT</span>): <span id="price" class="text-warning">N/A</span>
                         <span id="nasdaq-ema-container" style="display: none;">| MNQ EMA: <span id="nasdaq-ema" class="text-info">N/A</span></span>
@@ -229,6 +230,7 @@
                     const squawkFeed = document.getElementById('squawk-feed');
                     const devModeSwitch = document.getElementById('dev-mode-switch');
                     const devModeLabel = document.getElementById('dev-mode-label');
+                    const chopIndexEl = document.getElementById('chop-index');
 
 
                     // 0. Handle Kill Switch
@@ -276,6 +278,9 @@
                     } else {
                         nasdaqEma.textContent = "N/A";
                     }
+                    
+                    // Chop Index
+                    chopIndexEl.textContent = data.chop_index.toFixed(2);
                     
                     // 2. HUD and PnL
                     const formatCurrency = (val, isMainBalance = false) => {

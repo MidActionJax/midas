@@ -169,7 +169,8 @@ def status():
         'master_trading_mode': master_mode,
         'sizing_mode': sizing_mode,
         'execution_log': execution_log,
-        'dev_mode': state.state_manager.dev_mode
+        'dev_mode': state.state_manager.dev_mode,
+        'chop_index': state.state_manager.current_chop_index
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
@@ -256,7 +257,7 @@ def toggle_dev():
     new_mode = state.state_manager.toggle_dev_mode()
     return jsonify({'status': 'success', 'dev_mode': new_mode})
 
-@app.route('/approve_signal/<float:signal_id>', methods=['POST'])
+@app.route('/approve_signal/<string:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):
     # Log the user's decision
@@ -267,7 +268,7 @@ def approve_signal(signal_id):
 
     signal_to_execute = None
     for signal in state.state_manager.get_pending_signals():
-        if signal['timestamp'] == signal_id:
+        if str(signal['timestamp']) == signal_id:
             signal_to_execute = signal
             break
     
@@ -289,7 +290,6 @@ def approve_signal(signal_id):
         price = adapter.get_current_price(config.TRADING_SYMBOL)
         
         dynamic_size = calculate_position_size(
-            balance, 
             price, 
             state.state_manager.price_history
         )
@@ -301,11 +301,13 @@ def approve_signal(signal_id):
                 entry_price = price
                 position = {
                     'symbol': config.TRADING_SYMBOL,
-                    'entry_price': entry_price,
+                    'entry_price': price,
                     'size': dynamic_size,
-                    'type': 'LONG', # Explicitly set type for side
-                    'timestamp': time.time(),
-                    'signal_timestamp': signal_id # Link position to the original signal
+                    'type': 'BUY', # Or 'SELL' in the other block
+                    # FIX: Start a fresh timer for the Grace Period
+                    'timestamp': time.time(), 
+                    # Keep the original ID for the CSV Logger
+                    'signal_timestamp': float(signal_id)
                 }
                 state.state_manager.add_position(position)
 
@@ -316,11 +318,13 @@ def approve_signal(signal_id):
                 entry_price = price # Or get it from sell execution if different
                 position = {
                     'symbol': config.TRADING_SYMBOL,
-                    'entry_price': entry_price,
+                    'entry_price': price,
                     'size': dynamic_size,
-                    'type': 'SHORT', # Explicitly set type for side
-                    'timestamp': time.time(),
-                    'signal_timestamp': signal_id
+                    'type': 'SELL', # Or 'SELL' in the other block
+                    # FIX: Start a fresh timer for the Grace Period
+                    'timestamp': time.time(), 
+                    # Keep the original ID for the CSV Logger
+                    'signal_timestamp': float(signal_id)
                 }
                 state.state_manager.add_position(position)
 

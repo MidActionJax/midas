@@ -5,6 +5,7 @@ from datetime import datetime
 import joblib
 import os
 import pandas as pd
+import numpy as np
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -200,6 +201,41 @@ def get_current_atr(price_history, period=14):
     return atr
 
 
+def calculate_choppiness_index(df, period=14):
+    """
+    Calculates the Choppiness Index (CHOP).
+    Requires a DataFrame with 'high', 'low', and 'close' columns.
+    """
+    if not all(k in df.columns for k in ['high', 'low', 'close']) or len(df) < period:
+        return 50.0 # Default to neutral if not enough data
+
+    # Calculate True Range
+    tr1 = pd.DataFrame(df['high'] - df['low'])
+    tr2 = pd.DataFrame(abs(df['high'] - df['close'].shift(1)))
+    tr3 = pd.DataFrame(abs(df['low'] - df['close'].shift(1)))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    # Calculate Average True Range (ATR)
+    atr = tr.ewm(span=period, adjust=False).mean()
+
+    # Sum of ATR over the period
+    atr_sum = atr.rolling(window=period).sum()
+
+    # Highest High and Lowest Low over the period
+    highest_high = df['high'].rolling(window=period).max()
+    lowest_low = df['low'].rolling(window=period).min()
+
+    # Calculate Choppiness Index
+    numerator = atr_sum
+    denominator = highest_high - lowest_low
+    
+    # Avoid division by zero
+    chop = np.where(denominator == 0, 100, 100 * np.log10(numerator / denominator) / np.log10(period))
+    
+    # Return the last value, ensure it's a float
+    return float(chop[-1]) if len(chop) > 0 else 50.0
+
+
 def calculate_ema(prices, period=200):
     """
     Calculates the Exponential Moving Average (EMA) for a list of prices.
@@ -261,20 +297,15 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
     # --- DEV MODE OVERRIDE ---
     if state_manager.dev_mode:
-        print("--- DEV MODE: Bypassing all filters, auto-approving signal ---")
-        log_signal(signal, {}, 'APPROVED')
-        
-        # --- ADDED FOR DEV MODE EXECUTION ---
-        if adapter:
-            quantity = calculate_position_size(signal['price'], price_history_map.get(symbol, []))
-            if quantity > 0:
-                print(f"--- DEV MODE: Executing trade for {quantity} {symbol} ---")
-                if signal['type'] == 'BUY_SIGNAL':
-                    adapter.execute_buy(symbol, quantity, signal['price'], signal_id=signal['timestamp'])
-                elif signal['type'] == 'SELL_SIGNAL':
-                    adapter.execute_sell(symbol, quantity, signal['price'], signal_id=signal['timestamp'])
-        # ------------------------------------
-        
+        # We bypass the complex ML and trend filters, but DO NOT auto-execute.
+        # We tag it as a DEV signal and return it so it hits the Approval Queue.
+        signal['confidence_score'] = 99.99 # Fake high confidence for UI
+        signal['reason'] = 'DEV Override'
+        print("--- DEV MODE: Signal bypasses filters -> Sent to Approval Queue ---")
+
+        # SURGICAL FIX: Log the DEV signal so the CSV knows it exists
+        dummy_context = {'ema_val': 0, 'trend': 'DEV', 'atr': 0, 'session': 'DEV', 'whale_strength': 0}
+        log_signal(signal, dummy_context, 'PENDING')
         return signal
 
     # 2. Get Market Context
