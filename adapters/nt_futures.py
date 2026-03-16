@@ -146,17 +146,41 @@ class NTFuturesAdapter:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.settimeout(1)
+                s.settimeout(5.0)
                 s.connect((self.host, target_port))
                 s.sendall(f"GET_PRICE|{symbol}".encode())
                 data = s.recv(1024).decode()
                 
                 if data:
-                    price = float(data)
-                    # --- THE FIX: Update your sensors before returning the price ---
+                    # --- ENFORCE STRICT DICTIONARY MAPPING & FIREWALL ---
+                    if "|" in data:
+                        parts = data.split("|")
+                        if len(parts) >= 3 and parts[0] == "HEARTBEAT":
+                            recv_symbol = parts[1]
+                            if recv_symbol != symbol:
+                                print(f"❌ SOCKET FIREWALL: Expected {symbol} but got {recv_symbol}")
+                                return self.last_price.get(symbol)
+                            price = float(parts[2])
+                        else:
+                            price = float(parts[-1])
+                    else:
+                        price = float(data)
+                        
+                    if self.last_price.get(symbol) is not None:
+                        if abs(price - self.last_price[symbol]) / self.last_price[symbol] > 0.05:
+                            print(f"❌ ANOMALY FIREWALL: Cross-wired price rejected. {symbol} {self.last_price[symbol]} -> {price}")
+                            return self.last_price[symbol]
+                            
+                    self.last_price[symbol] = price
                     self.update_indicators(symbol, price)
                     return price
                 return None
+            except (socket.timeout, ConnectionResetError):
+                print("[SYSTEM] Attempting Socket Reconnect...")
+                if s:
+                    s.close()
+                time.sleep(2)
+                continue
             except OSError as e:
                 if offset == 4:
                     print(f"❌ Socket Error ({symbol} on port {target_port}): {e}") 
@@ -206,6 +230,11 @@ class NTFuturesAdapter:
             if len(self.price_history[symbol]) >= 14:
                 changes = [abs(self.price_history[symbol][i] - self.price_history[symbol][i-1]) for i in range(1, len(self.price_history[symbol]))]
                 atr = sum(changes[-14:]) / 14
+                
+                # Sanity check: Clear absurd ATR values to reset filter
+                if atr > 500:
+                    atr = 0.0
+                    
                 if symbol == 'MES': self.current_features['atr_mes'] = atr
                 else: self.current_features['atr_mnq'] = atr
 
@@ -244,11 +273,17 @@ class NTFuturesAdapter:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.settimeout(2) # 2-second timeout
+                s.settimeout(5.0)
                 s.connect((self.host, target_port))
                 s.sendall(command.encode())
                 print(f"✅ Sent to NT8 on port {target_port}: {command}")
                 return True
+            except (socket.timeout, ConnectionResetError):
+                print("[SYSTEM] Attempting Socket Reconnect...")
+                if s:
+                    s.close()
+                time.sleep(2)
+                continue
             except Exception as e:
                 if offset == 4:
                     print(f"❌ Socket Error on port {target_port} sending '{command}': {e}")

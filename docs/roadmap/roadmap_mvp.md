@@ -163,3 +163,15 @@ The Goal: Guarantee that once we are "in the green," we never let a winning trad
 - **Pattern Fingerprinting**: Identify repetitive footprint rhythms (like the 15-contract "shredder") left by execution algorithms.
 - **Institutional Labeling**: Flag actors as "Whale_Alpha" or "Whale_Beta" to monitor which player is in control of the tape.
 - **Piggyback Execution**: Use high-confidence whale detection to trigger entries when big players are confirmed to be back on the tape.
+
+--- 
+## Backlog!!
+- [ ] Self-Correction Logic: Enable the RL agent to re-train itself as market conditions change over time.we have this retrain and reload. id love to just push a button on the dashbaord and have it update from like the last week or something. i dont want it to replace all the data but yeah idk.
+- account balance? is that real balance, or what is it actually. because i want it to reflect how much i actually have you know, not the PNL or potential or whatever. 
+- Equity Growth chart isnt moving. its just a flat line even though ive made trades and stuff
+- in the performance scorecard, the Win Rate, avvg winner, avg loser doesnt update its just at 0s
+- Nasdaq Status: is always updating
+- MNQ EMA: stuck at 0.00 
+- Execution Log Symbol is always null and 	ML Confidence always N/A
+- at the top where it says "Order Flow "Grey Box" System" its boring. we need a catch phrase
+- loud cha-ching when a trade pops up so ik to look over and approve

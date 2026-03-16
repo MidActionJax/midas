@@ -198,6 +198,11 @@ def get_current_atr(price_history, period=14):
 
     # ATR is the average of the true ranges over the specified period
     atr = statistics.mean(true_ranges[-period:])
+    
+    # SANITY CHECK: Clear absurd values to reset the filter
+    if atr > 500:
+        return 0.0
+        
     return atr
 
 
@@ -321,77 +326,71 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         return None
 
     trend_mes = "BULLISH" if current_price_mes > ema_mes else "BEARISH"
+    signal['trend'] = trend_mes
+    signal['trend_pass'] = (trend_mes == "BULLISH" and signal['type'] == 'BUY_SIGNAL') or \
+                           (trend_mes == "BEARISH" and signal['type'] == 'SELL_SIGNAL')
     
-    # 3. Core Filter: Signal must match Trend
-    if (trend_mes == "BULLISH" and signal['type'] == 'BUY_SIGNAL') or \
-       (trend_mes == "BEARISH" and signal['type'] == 'SELL_SIGNAL'):
+    # --- THE 4TH KEY: Volatility Gate ---
+    atr_mes = get_current_atr(price_history_mes)
+    signal['atr'] = atr_mes
+    signal['volatility_pass'] = is_volatility_safe(atr_mes)
         
-        # --- THE 4TH KEY: Volatility Gate ---
-        atr_mes = get_current_atr(price_history_mes)
-        if not is_volatility_safe(atr_mes):
-            print(f"--- VETO: Volatility {atr_mes:.2f} out of range (2.0-15.0). ---")
-            return None
+    # --- THE TRUTH ENGINE: ML Veto ---
+    if TRUTH_ENGINE:
+        # Gather features for the model
+        atr_mnq = get_current_atr(price_history_mnq)
+        in_sync = (current_price_mes > ema_mes) == (price_history_mnq[-1] > calculate_ema(price_history_mnq, period=5))
         
-        # --- THE TRUTH ENGINE: ML Veto ---
-        if TRUTH_ENGINE:
-            # Gather features for the model
-            atr_mnq = get_current_atr(price_history_mnq)
-            in_sync = (current_price_mes > ema_mes) == (price_history_mnq[-1] > calculate_ema(price_history_mnq, period=5))
-            
-            features = pd.DataFrame([{
-                'atr_mes': atr_mes,
-                'atr_mnq': atr_mnq,
-                'above_ema': int(current_price_mes > ema_mes),
-                'in_sync': int(in_sync),
-                'hour': datetime.now().hour
-            }])
-            
-            # Prediction
-            probs = TRUTH_ENGINE.predict_proba(features)[0]
-            success_prob = probs[1]
-            ml_score_pct = success_prob * 100
-
-            # --- THE 5TH KEY: Institutional Sync ---
-            dominant_whales = state_manager.get_active_dominant_whales()
-            if dominant_whales:
-                all_whales = state_manager.get_detected_whales()
-                for whale_id in dominant_whales:
-                    # Find the most recent pattern for this whale_id
-                    whale_pattern = next((w for w in reversed(all_whales) if w.get('whale_id') == whale_id), None)
-                    if whale_pattern:
-                        whale_side = whale_pattern.get('side')
-                        signal_side = 'BUY' if signal['type'] == 'BUY_SIGNAL' else 'SELL'
-                        
-                        if whale_side == signal_side:
-                            print(f"--- 5TH KEY: Sync with Dominant Whale {whale_id} detected! Boosting confidence. ---")
-                            ml_score_pct = min(ml_score_pct + 15, 100.0) # Add 15%, cap at 100
-                            signal['whale_id'] = whale_id # Tag signal for logging
-                            break # Apply boost only once
-
-            if ml_score_pct < 60:
-                print(f"ML VETO: Confidence too low ({ml_score_pct:.2f}%)")
-                return None
-            
-            signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
-            print(f"ML SUCCESS: Approved with {ml_score_pct:.2f}% confidence")
-
-        # 4. Success: Finalize and Log
-        session_str = get_market_session()
-        raw_whale_strength = calculate_whale_strength(signal['size'], order_book)
+        features = pd.DataFrame([{
+            'atr_mes': atr_mes,
+            'atr_mnq': atr_mnq,
+            'above_ema': int(current_price_mes > ema_mes),
+            'in_sync': int(in_sync),
+            'hour': datetime.now().hour
+        }])
         
-        context_data = {
-            'ema_val': ema_mes,
-            'trend': trend_mes,
-            'atr': atr_mes,
-            'session': session_str,
-            'whale_strength': raw_whale_strength
-        }
-        
-        log_signal(signal, context_data, 'PENDING')
-        return signal
+        # Prediction
+        probs = TRUTH_ENGINE.predict_proba(features)[0]
+        success_prob = probs[1]
+        ml_score_pct = success_prob * 100
 
-    print(f"--- FILTERED: {signal['type']} blocked by {trend_mes} trend ---")
-    return None
+        # --- SENSITIVITY RECALIBRATION: Market Sync Weight ---
+        if in_sync:
+            ml_score_pct += 25.0 # Boost base confidence if markets align
+
+        # --- THE 5TH KEY: Institutional Sync ---
+        dominant_whales = state_manager.get_active_dominant_whales()
+        if dominant_whales:
+            all_whales = state_manager.get_detected_whales()
+            for whale_id in dominant_whales:
+                # Find the most recent pattern for this whale_id
+                whale_pattern = next((w for w in reversed(all_whales) if w.get('whale_id') == whale_id), None)
+                if whale_pattern:
+                    whale_side = whale_pattern.get('side')
+                    signal_side = 'BUY' if signal['type'] == 'BUY_SIGNAL' else 'SELL'
+                    
+                    if whale_side == signal_side:
+                        print(f"--- 5TH KEY: Sync with Dominant Whale {whale_id} detected! Boosting confidence. ---")
+                        ml_score_pct += 30.0 # Increased weight for institutional footprint
+                        signal['whale_id'] = whale_id # Tag signal for logging
+                        break # Apply boost only once
+
+        ml_score_pct = min(ml_score_pct, 100.0) # Ensure it never exceeds 100%
+        signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
+        signal['ml_confidence_value'] = ml_score_pct
+
+    session_str = get_market_session()
+    raw_whale_strength = calculate_whale_strength(signal['size'], order_book)
+    
+    signal['context_data'] = {
+        'ema_val': ema_mes,
+        'trend': trend_mes,
+        'atr': atr_mes,
+        'session': session_str,
+        'whale_strength': raw_whale_strength
+    }
+    
+    return signal
 
 def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
     """
