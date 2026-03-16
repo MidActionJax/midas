@@ -175,3 +175,4 @@ The Goal: Guarantee that once we are "in the green," we never let a winning trad
 - Execution Log Symbol is always null and 	ML Confidence always N/A
 - at the top where it says "Order Flow "Grey Box" System" its boring. we need a catch phrase
 - loud cha-ching when a trade pops up so ik to look over and approve
+- 3-Month Deep Dive to 1 full year of data
