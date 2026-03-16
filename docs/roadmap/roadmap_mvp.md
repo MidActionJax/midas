@@ -35,7 +35,7 @@
 - [x] **Correlation Heatmap**: Add a visual "Sync Meter" to show real-time correlation between the S&P (MES) and Nasdaq (MNQ) over the last hour.
 
 ---
-## 🟡 Sprint 14: Battle-Hardening & "The Great Loosening"
+## 🟢 Sprint 14: Battle-Hardening & "The Great Loosening"
 
 **Goal**: Transition from a "fortress" that never trades to a "predator" that trades with precision and properly logs every exit.
 
@@ -124,7 +124,7 @@ Trailing Stop: If the price hits 3 points, the stop locks in at 2 points.
 The "Why": This aligns perfectly with your "Great Loosening" goal. If we only need 4 points to win, we can trade much more often than if we were waiting for a 10-point miracle.
 
 Your Finalized Sprint 14 Plan (Scalper Edition)
-🟡 Sprint 14: Battle-Hardening & "The Great Loosening"
+🟢 Sprint 14: Battle-Hardening & "The Great Loosening"
 Goal: Transition from a "fortress" that never trades to a high-frequency "predator" that locks in small, consistent wins.
 
 1. The Decision Trace (Communication Audit)
