@@ -70,8 +70,7 @@ def train_model():
     # --- Train/Test Split ---
     # Ensure there's enough data for a split
     if len(df['outcome_label'].unique()) < 2:
-        print("Warning: Only one class present in the data. Cannot perform stratified split or train a meaningful classifier.")
-        print("Model training skipped.")
+        print("Not enough diverse data (need both wins and losses). Keeping existing models.")
         return
 
     X_train, X_test, y_train, y_test = train_test_split(

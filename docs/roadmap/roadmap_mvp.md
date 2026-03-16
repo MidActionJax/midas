@@ -178,3 +178,4 @@ The Goal: Guarantee that once we are "in the green," we never let a winning trad
 - 3-Month Deep Dive to 1 full year of data
 - Market Session always says Unknown
 - Realized PnL: i think always stays at 0.00
+- No Shorting

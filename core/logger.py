@@ -37,7 +37,7 @@ def log_signal(signal_data, context_data, status):
         'atr_volatility': context_data.get('atr'),
         'session_context': context_data.get('session_context'),
         'whale_strength': context_data.get('whale_strength'),
-        'ml_confidence': signal_data.get('confidence'),
+        'ml_confidence': signal_data.get('ml_confidence', signal_data.get('confidence_score', 'N/A')),
         'Whale_ID': signal_data.get('whale_id', ''),
         'user_decision': status,
         'final_pnl': '',

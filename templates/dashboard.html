@@ -21,7 +21,6 @@
     </style> -->
 </head>
 <body>
-    <audio id="ping-sound" src="https://www.soundjay.com/buttons/sounds/button-16.mp3" preload="auto"></audio>
     <div class="container mt-5">
         <div id="kill-switch-alert" class="alert alert-danger text-center" role="alert" style="display: none;">
             <strong>CRITICAL: DAILY DRAWDOWN LIMIT REACHED. TRADING SUSPENDED.</strong>
@@ -30,7 +29,7 @@
         <div class="content-header">
             <h1 class="text-center">Project Midas</h1>
         </div>
-        <p class="text-center text-muted">Order Flow "Grey Box" System</p>
+        <h4 class="text-center text-muted" style="letter-spacing: 2px; color: text-shadow; 0 0 5px rgba(0,255,65,0.3)">Apex Predator Algorithmic Engine</h4>
 
         <!-- HUD Row -->
         <div class="row text-center mb-4">
@@ -79,6 +78,7 @@
                 <input class="form-check-input" type="checkbox" role="switch" id="dev-mode-switch">
                 <label class="form-check-label text-light" for="dev-mode-switch" id="dev-mode-label">DEV</label>
             </div>
+            <button id="enable-audio" class="btn btn-outline-warning">🔈 Enable Audio</button>
             <a id="start-button" href="/start_bot" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
@@ -205,18 +205,67 @@
             </div>
         </div>
 
-        <div class="d-grid gap-2 mt-4">
-            <a href="/retrain" class="btn btn-outline-info">Retrain & Reload ML Model</a>
+        <div class="d-grid gap-2 mt-4 d-md-flex justify-content-md-center">
+            <a href="/retrain" class="btn btn-outline-info">Reload Models</a>
+            <button id="btn-sync-retrain" class="btn btn-primary" onclick="syncAndRetrain()">Sync & Retrain AI</button>
         </div>
     </div>
 
     <script>
         // State for new features
         let knownDominantWhales = [];
+        let knownSignals = new Set();
+        let lastPendingCount = 0;
+        window.audioEnabled = false;
+
+        function playMidasPing() {
+            if (!window.audioEnabled) return;
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, ctx.currentTime); // High pitch A note
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.5);
+                console.log("🔊 Synthetic Ping Fired");
+            } catch (e) {
+                console.log("Synth failed", e);
+            }
+        }
 
         // API Calls
         function approveSignal(id) { fetch(`/approve_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
         function rejectSignal(id) { fetch(`/reject_signal/${id}`, {method: 'POST'}).then(r=>r.json()).then(updateStatus); }
+
+        function syncAndRetrain() {
+            const btn = document.getElementById('btn-sync-retrain');
+            btn.textContent = "Retraining... Please wait";
+            btn.disabled = true;
+            fetch('/api/retrain', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                alert(data.message);
+                btn.textContent = "Sync & Retrain AI";
+                btn.disabled = false;
+            })
+            .catch(e => {
+                alert("Error during retraining.");
+                btn.textContent = "Sync & Retrain AI";
+                btn.disabled = false;
+            });
+        }
+
+        document.getElementById('enable-audio').addEventListener('click', function() {
+            window.audioEnabled = true;
+            playMidasPing();
+            this.textContent = '🔊 Audio Enabled';
+            this.classList.replace('btn-outline-warning', 'btn-warning');
+        });
 
         function triggerKillSwitch() {
             // 1. Show the confirmation dialog
@@ -314,23 +363,21 @@
                     const unit = (data.symbol === 'MES') ? ' USD' : ' USDT';
                     priceEl.textContent = data.price + unit;
 
-                    // Nasdaq Status
-                    if (data.nasdaq_status) {
-                        nasdaqStatus.textContent = data.nasdaq_status;
+                    // Nasdaq Status Bug Fix & EMA
+                    if (data.nasdaq_connected) {
+                        nasdaqStatus.textContent = data.nasdaq_status || "Connected";
                         if (data.nasdaq_status === 'BULLISH') {
                             nasdaqStatus.className = 'badge bg-success';
                         } else if (data.nasdaq_status === 'BEARISH') {
                             nasdaqStatus.className = 'badge bg-danger';
                         } else {
-                            nasdaqStatus.className = 'badge bg-secondary';
+                            nasdaqStatus.className = 'badge bg-info text-dark';
                         }
-                    }
-                    if (data.nasdaq_ema !== undefined && data.nasdaq_ema !== null) {
-                        // Show the number even if it is 0.00
-                        nasdaqEma.textContent = data.nasdaq_ema.toFixed(2);
                     } else {
-                        nasdaqEma.textContent = "N/A";
+                        nasdaqStatus.textContent = 'DISCONNECTED';
+                        nasdaqStatus.className = 'badge bg-secondary';
                     }
+                    nasdaqEma.textContent = (data.ema_mnq !== null && data.ema_mnq !== undefined && data.ema_mnq !== 0) ? parseFloat(data.ema_mnq).toFixed(2) : "0.00";
                     
                     // Chop Index
                     chopIndexEl.textContent = data.chop_index.toFixed(2);
@@ -386,6 +433,70 @@
                     else if (realizedPnl < 0) pnlEl.className = 'text-danger';
                     else pnlEl.className = 'text-light';
 
+                    // Live Equity Chart Update 
+                    if (data.pnl_labels && data.pnl_history) {
+                        console.log("CHART DATA RECEIVED:", data.pnl_history);
+                        if (!equityChart) {
+                            const canvas = document.getElementById('equityChart');
+                            if (canvas) {
+                                const ctx = canvas.getContext('2d');
+                                let gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight);
+                                gradient.addColorStop(0, 'rgba(0, 255, 65, 0.4)'); 
+                                gradient.addColorStop(1, 'rgba(0, 255, 65, 0.0)'); 
+
+                                equityChart = new Chart(ctx, {
+                                    type: 'line',
+                                    data: {
+                                        labels: data.pnl_labels,
+                                        datasets: [{
+                                            label: 'Cumulative PnL ($)',
+                                            data: data.pnl_history,
+                                            borderColor: '#00FF41',
+                                            backgroundColor: gradient,
+                                            borderWidth: 2,
+                                            fill: true,
+                                            tension: 0.4,
+                                            spanGaps: true,
+                                            pointRadius: 2,
+                                            pointHoverRadius: 6,
+                                            pointHoverBackgroundColor: '#00FF41',
+                                            pointHoverBorderColor: '#fff',
+                                            pointHoverBorderWidth: 2
+                                        }]
+                                    },
+                                    options: {
+                                        responsive: true,
+                                        maintainAspectRatio: false,
+                                        plugins: { legend: { display: false } },
+                                        scales: {
+                                            x: { 
+                                                grid: { color: 'rgba(255, 255, 255, 0.05)' }, 
+                                                ticks: { 
+                                                    color: '#888',
+                                                    minRotation: 45
+                                                } 
+                                            },
+                                            y: { 
+                                                grid: { color: 'rgba(255, 255, 255, 0.05)' }, 
+                                                ticks: { 
+                                                    color: '#888',
+                                                    callback: function(value) { return '$' + value; }
+                                                },
+                                                grace: '5%'
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        } else {
+                            equityChart.data.labels = [];
+                            equityChart.data.datasets[0].data = [];
+                            
+                            equityChart.data.labels = data.pnl_labels;
+                            equityChart.data.datasets[0].data = data.pnl_history;
+                            equityChart.update();
+                        }
+                    }
                     openPositionsEl.textContent = data.open_positions;
 
                     // Master Switch
@@ -419,15 +530,16 @@
 
                     // Performance Scorecard
                     if (data.performance) {
-                        winRateEl.textContent = data.performance.win_rate + '%';
                         totalPnlEl.textContent = formatCurrency(data.performance.total_pnl);
-                        avgWinEl.textContent = formatCurrency(data.performance.avg_win);
-                        avgLossEl.textContent = formatCurrency(data.performance.avg_loss);
 
                         if (data.performance.win_rate > 60) winRateEl.className = 'fs-3 text-success';
                         else if (data.performance.win_rate < 45) winRateEl.className = 'fs-3 text-danger';
                         else winRateEl.className = 'fs-3 text-warning';
                     }
+                    
+                    winRateEl.textContent = parseFloat(data.win_rate || 0).toFixed(2) + '%';
+                    avgWinEl.textContent = '$' + parseFloat(data.avg_winner || 0).toFixed(2);
+                    avgLossEl.textContent = '$' + parseFloat(data.avg_loser || 0).toFixed(2);
 
 
                     // 3. Tables Update
@@ -443,9 +555,18 @@
 
                     // 4. Approval Queue Update
                     cardsDiv.innerHTML = '';
+                    
+                    const currentPendingCount = data.pending_signals ? data.pending_signals.length : 0;
+                    let newSignalDetected = (currentPendingCount > lastPendingCount);
+                    lastPendingCount = currentPendingCount;
+
                     if (data.pending_signals && data.pending_signals.length > 0) {
                         queueDiv.style.display = 'block';
                         data.pending_signals.forEach(s => {
+                            if (!knownSignals.has(s.timestamp)) {
+                                knownSignals.add(s.timestamp);
+                            }
+
                             const color = s.type === 'BUY_SIGNAL' ? 'text-success' : 'text-danger';
                             
                             const score = s.ml_confidence ? parseFloat(s.ml_confidence.replace('%','')) : 0;
@@ -469,6 +590,10 @@
                                     </div>
                                 </div>`;
                         });
+
+                        if (newSignalDetected) {
+                            playMidasPing();
+                        }
                     } else {
                         queueDiv.style.display = 'none';
                     }
@@ -477,17 +602,15 @@
                     executionLogTable.innerHTML = '';
                     if(data.execution_log) {
                         data.execution_log.reverse().forEach(log => {
-                            const confidence = log.ml_confidence ? parseFloat(log.ml_confidence.replace('%','')) : null;
-                            const confidenceText = confidence ? `${confidence.toFixed(2)}%` : 'N/A';
                             const statusColor = log.status === 'Executed' ? 'text-success' : (log.status === 'Vetoed' ? 'text-danger' : 'text-warning');
 
                             executionLogTable.innerHTML += `
                                 <tr>
                                     <td>${new Date(log.timestamp * 1000).toLocaleTimeString()}</td>
-                                    <td>${log.symbol}</td>
+                                    <td>${log.symbol || 'N/A'}</td>
                                     <td>${log.type}</td>
                                     <td>${log.price}</td>
-                                    <td>${confidenceText}</td>
+                                    <td>${log.ml_confidence !== null ? log.ml_confidence : 'N/A'}</td>
                                     <td class="${statusColor}">${log.status}</td>
                                 </tr>
                             `;
@@ -503,7 +626,7 @@
                             // Audio Alert and Squawk Feed
                             if (!knownDominantWhales.includes(whale.whale_id)) {
                                 knownDominantWhales.push(whale.whale_id);
-                                document.getElementById('ping-sound').play();
+                                playMidasPing();
                                 
                                 const dominance = whale.side === 'BUY' ? 'BULLISH' : 'BEARISH';
                                 const color = whale.side === 'BUY' ? 'text-success' : 'text-danger';
@@ -539,67 +662,6 @@
 
         // Equity Growth Chart Logic
         let equityChart;
-
-        async function updateEquityChart() {
-            try {
-                const response = await fetch('/api/equity');
-                const data = await response.json();
-
-                const labels = data.map(d => {
-                    const date = new Date(d.time);
-                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                });
-                const values = data.map(d => d.balance);
-
-                if (equityChart) {
-                    equityChart.data.labels = labels;
-                    equityChart.data.datasets[0].data = values;
-                    equityChart.update();
-                } else {
-                    const canvas = document.getElementById('equityChart');
-                    if (!canvas) return; 
-                    
-                    const ctx = canvas.getContext('2d');
-                    let gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight);
-                    gradient.addColorStop(0, 'rgba(0, 255, 65, 0.4)'); 
-                    gradient.addColorStop(1, 'rgba(0, 255, 65, 0.0)'); 
-
-                    equityChart = new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                label: 'Cumulative PnL ($)',
-                                data: values,
-                                borderColor: '#00FF41',
-                                backgroundColor: gradient,
-                                borderWidth: 2,
-                                fill: true,
-                                tension: 0.3,
-                                pointRadius: 0,
-                                pointHoverRadius: 6,
-                                pointHoverBackgroundColor: '#00FF41',
-                                pointHoverBorderColor: '#fff',
-                                pointHoverBorderWidth: 2
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: { legend: { display: false } },
-                            scales: {
-                                x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#888' } },
-                                y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: '#888' } }
-                            }
-                        }
-                    });
-                }
-            } catch (error) {
-                console.error("Error updating equity chart:", error);
-            }
-        }
-        updateEquityChart();
-        setInterval(updateEquityChart, 60000);
 
         // Master Switcher Listener
         document.getElementById('master-switch').addEventListener('change', function(e) {

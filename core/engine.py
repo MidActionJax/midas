@@ -36,6 +36,35 @@ class MidasEngine(threading.Thread):
         else:
             print(f"--- Warning: RL model not found at {model_path}.zip. AI Supervisor disabled. ---")
 
+    def reload_models(self):
+        print("--- Hot Reloading AI Models ---")
+        # Reload RL Model
+        model_path = "models/midas_rl_model"
+        if os.path.exists(f"{model_path}.zip"):
+            try:
+                new_rl = PPO.load(model_path)
+                if new_rl:
+                    self.rl_model = new_rl
+                    print(f"--- RL Agent (AI Supervisor) reloaded successfully ---")
+            except Exception as e:
+                print(f"Error reloading RL model: {e}")
+                
+        # Reload Truth Engine
+        from core.logic import brain
+        if hasattr(brain, '_load_model'):
+            brain.model = brain._load_model()
+            
+        import joblib
+        truth_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'midas_truth_engine.joblib')
+        if os.path.exists(truth_model_path):
+            try:
+                new_truth = joblib.load(truth_model_path)
+                if new_truth:
+                    logic.TRUTH_ENGINE = new_truth
+                    print("--- Truth Engine reloaded successfully ---")
+            except Exception as e:
+                print(f"Error reloading Truth Engine: {e}")
+
     def flatten_all(self):
         print("!!! EMERGENCY KILL SWITCH ACTIVATED - FLATTENING ALL POSITIONS !!!")
         self.is_paused = True
@@ -112,6 +141,10 @@ class MidasEngine(threading.Thread):
                         # --- TIGHTER MICRO-PROFIT PROTECTORS ---
                         points_profit = (current_price - entry_price) if is_long else (entry_price - current_price)
                         
+                        # Estimate unrealized PnL manually for the logger 
+                        multiplier = 5.0 if pos_symbol == 'MES' else 2.0
+                        pos['unrealized_pnl'] = points_profit * multiplier * pos.get('size', 1)
+                        
                         if 'dynamic_sl' not in pos:
                             pos['dynamic_sl'] = -4.0 # Default SL to 4 points as a safety net
                             
@@ -159,8 +192,41 @@ class MidasEngine(threading.Thread):
                     if sig_id:
                         logger.log_trade_exit(sig_id, final_pnl, "Exit Detected")
                     
+                    # --- FORCE IMMEDIATE APPEND TO CSV ---
+                    try:
+                        import csv
+                        with open('trade_history.csv', 'a', newline='') as f:
+                            writer = csv.DictWriter(f, fieldnames=[
+                                'timestamp_id', 'symbol', 'type', 'price', 'size',
+                                'ema_200_val', 'trend_dir', 'atr_volatility', 'session_context', 'whale_strength',
+                                'ml_confidence', 'Whale_ID', 'user_decision', 'final_pnl', 'outcome_label', 'exit_reason'
+                            ])
+                            writer.writerow({
+                                'timestamp_id': time.time(),
+                                'symbol': pos.get('symbol', ''),
+                                'type': pos.get('type', ''),
+                                'price': pos.get('entry_price', 0),
+                                'size': pos.get('size', 1),
+                                'user_decision': 'APPROVED',
+                                'final_pnl': final_pnl,
+                                'outcome_label': 'WIN' if final_pnl > 0 else 'LOSS',
+                                'exit_reason': 'Exit Executed'
+                            })
+                    except Exception as e:
+                        print(f"Failed to append to CSV: {e}")
+
                     state.state_manager.add_pnl(final_pnl)
                     state.state_manager.remove_position(pos)
+                    
+                    # --- LIVE SCORECARD TRACKING ---
+                    if not hasattr(state.state_manager, 'live_trades'):
+                        state.state_manager.live_trades = 0
+                        state.state_manager.live_wins = 0
+                        
+                    state.state_manager.live_trades += 1
+                    if final_pnl > 0:
+                        state.state_manager.live_wins += 1
+                    state.state_manager.account_balance += final_pnl
                     
                     print(f"--- EXIT DETECTED: {final_pnl} ---")
                     self.last_trade_time = time.time()
@@ -384,8 +450,16 @@ class MidasEngine(threading.Thread):
                                 else:
                                     print(f"[CHECK] RL Supervisor: [PASS] (N/A - No Model)")
 
+                                # 4. No Shorting Firewall
+                                no_short_pass = True
+                                if signal['type'] == 'SELL_SIGNAL':
+                                    no_short_pass = False
+                                    print(f"[CHECK] No Shorting Firewall: [FAIL] (Reason: Long-Only Mode)")
+                                else:
+                                    print(f"[CHECK] No Shorting Firewall: [PASS]")
+
                                 # FINAL DECISION
-                                if not (trend_pass and vol_pass and ml_pass and rl_pass):
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass and no_short_pass):
                                     print("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
                                         continue

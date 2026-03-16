@@ -13,6 +13,7 @@ import pandas as pd
 import numpy as np
 import threading
 from models.rl_agent import retrain_agent
+import datetime
 
 app = Flask(__name__)
 load_dotenv()
@@ -37,30 +38,33 @@ def get_performance_stats():
     - Historical averages (Avg Win/Loss) are from the CSV file.
     """
     # --- Live Session Data ---
-    live_pnl = 0
-    win_rate = 0
-    if state.state_manager.session_start_balance > 0:
-        live_pnl = state.state_manager.account_balance - state.state_manager.session_start_balance
+    live_pnl = state.state_manager.daily_pnl
     
-    if state.state_manager.live_trades > 0:
-        win_rate = (state.state_manager.live_wins / state.state_manager.live_trades) * 100
+    live_trades = getattr(state.state_manager, 'live_trades', 0)
+    live_wins = getattr(state.state_manager, 'live_wins', 0)
+    win_rate = (live_wins / live_trades) * 100 if live_trades > 0 else 0
 
     # --- Historical Data ---
     avg_win = 0
     avg_loss = 0
     total_trades = 0
+    realized_pnl = 0
     try:
         if os.path.exists('trade_history.csv') and os.stat('trade_history.csv').st_size > 0:
             df = pd.read_csv('trade_history.csv')
-            required_columns = ['outcome_label', 'final_pnl']
-            if all(col in df.columns for col in required_columns):
-                closed_trades = df.dropna(subset=['outcome_label'])
+            if 'final_pnl' in df.columns:
+                df['final_pnl'] = pd.to_numeric(df['final_pnl'], errors='coerce')
+                closed_trades = df[df['final_pnl'].notna()]
+                closed_trades = closed_trades[closed_trades['final_pnl'] != 0.0]
                 if not closed_trades.empty:
-                    wins = closed_trades[closed_trades['outcome_label'] == 'WIN']
-                    losses = closed_trades[closed_trades['outcome_label'] == 'LOSS']
+                    wins = closed_trades[closed_trades['final_pnl'] > 0]
+                    losses = closed_trades[closed_trades['final_pnl'] <= 0]
                     avg_win = wins['final_pnl'].mean() if not wins.empty else 0
                     avg_loss = losses['final_pnl'].mean() if not losses.empty else 0
                     total_trades = int(len(closed_trades))
+                    realized_pnl = closed_trades['final_pnl'].sum()
+                    if live_trades == 0:
+                        win_rate = (len(wins) / total_trades) * 100 if total_trades > 0 else 0
     except Exception:
         pass # Silently fail to keep dashboard running
 
@@ -69,6 +73,7 @@ def get_performance_stats():
         'total_pnl': round(float(live_pnl), 2),
         'avg_win': round(float(avg_win), 2),
         'avg_loss': round(float(avg_loss), 2),
+        'realized_pnl': round(float(realized_pnl), 2),
         'total_trades': total_trades
     }
 
@@ -135,10 +140,10 @@ def status():
 
                 execution_log.append({
                     'timestamp': row.get('timestamp_id'),
-                    'symbol': row.get('symbol'),
+                    'symbol': row.get('symbol') or config.TRADING_SYMBOL,
                     'type': row.get('type'),
                     'price': row.get('price'),
-                    'ml_confidence': row.get('ml_confidence'),
+                    'ml_confidence': row.get('ml_confidence') or 'N/A',
                     'status': status
                 })
     except Exception as e:
@@ -161,6 +166,37 @@ def status():
                     correlation_score = float(corr_val)
     except Exception as e:
         print(f"Error calculating correlation: {e}")
+        
+    # --- Generate Equity Curve ---
+    pnl_labels = []
+    pnl_history = []
+    try:
+        if os.path.exists('trade_history.csv'):
+            df_eq = pd.read_csv('trade_history.csv')
+            if 'final_pnl' in df_eq.columns:
+                df_eq['final_pnl'] = pd.to_numeric(df_eq['final_pnl'], errors='coerce')
+                df_eq = df_eq[df_eq['final_pnl'].notna()]
+                df_eq = df_eq[df_eq['final_pnl'] != 0.0]
+                if not df_eq.empty:
+                    df_eq = df_eq.sort_values(by='timestamp_id', ascending=True)
+                    
+                    pnl_history = [0.0]
+                    pnl_labels = ['Start']
+                    
+                    running_total = 0.0
+                    for _, row in df_eq.iterrows():
+                        running_total += float(row['final_pnl'])
+                        pnl_history.append(round(running_total, 2))
+                        time_str = datetime.datetime.fromtimestamp(float(row['timestamp_id'])).strftime('%H:%M')
+                        pnl_labels.append(time_str)
+    except Exception as e:
+        print(f"Error generating equity curve: {e}")
+        
+    if not pnl_history or len(pnl_history) <= 1:
+        pnl_labels = ['Start', 'Live']
+        pnl_history = [0.0, float(state.state_manager.daily_pnl)]
+        
+    print(f"DEBUG: Sending {len(pnl_history)} points to Chart.")
 
     status_data = {
         'active': False,
@@ -168,7 +204,7 @@ def status():
         'symbol': config.TRADING_SYMBOL,
         'market_depth': None,
         'pending_signals': [],
-        'realized_pnl': state.state_manager.get_realized_pnl(),
+        'realized_pnl': performance_stats.get('realized_pnl', 0.0),
         'open_positions': len(state.state_manager.get_active_positions()),
         'kill_switch_active': state.state_manager.is_kill_switch_active,
         
@@ -178,9 +214,15 @@ def status():
             if whale.get('whale_id') in state.state_manager.get_active_dominant_whales()
         ],
         
-        'nasdaq_status': 'UNKNOWN',
-        'nasdaq_ema': None,
+        'nasdaq_status': 'Connected',
+        'ema_mnq': 0.0,
+        'nasdaq_connected': False,
         'performance': performance_stats,
+        
+        'win_rate': performance_stats.get('win_rate', 0.0),
+        'avg_winner': performance_stats.get('avg_win', 0.0),
+        'avg_loser': performance_stats.get('avg_loss', 0.0),
+
         # HUD Data
         'account_balance': account_balance,
         'daily_pnl': daily_pnl,
@@ -191,7 +233,9 @@ def status():
         'execution_log': execution_log,
         'dev_mode': state.state_manager.dev_mode,
         'chop_index': state.state_manager.current_chop_index,
-        'correlation_score': correlation_score
+        'correlation_score': correlation_score,
+        'pnl_labels': pnl_labels,
+        'pnl_history': pnl_history
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
@@ -201,6 +245,7 @@ def status():
         pending_signals = state.state_manager.get_pending_signals()
 
         if core.engine.engine_thread.adapter:
+             status_data['nasdaq_connected'] = True
              try:
                 price = core.engine.engine_thread.adapter.get_current_price(config.TRADING_SYMBOL)
                 status_data['price'] = price
@@ -212,24 +257,32 @@ def status():
             status_data['price'] = "Initializing..."
 
         status_data['market_depth'] = market_data
-        status_data['pending_signals'] = pending_signals
+        
+        formatted_pending_signals = []
+        for sig in pending_signals:
+            formatted_sig = sig.copy()
+            formatted_sig['symbol'] = sig.get('symbol', config.TRADING_SYMBOL)
+            if 'ml_confidence' not in formatted_sig and 'confidence_score' in formatted_sig:
+                formatted_sig['ml_confidence'] = f"{formatted_sig['confidence_score']}%"
+            elif 'ml_confidence' not in formatted_sig:
+                formatted_sig['ml_confidence'] = "N/A"
+            formatted_pending_signals.append(formatted_sig)
+            
+        status_data['pending_signals'] = formatted_pending_signals
 
-        # Add Nasdaq trend data if available
         # Add Nasdaq trend data if available
         if config.TRADING_MODE in ['PAPER_FUTURES', 'NT_FUTURES']:
             if core.engine.engine_thread and core.engine.engine_thread.adapter:
                 features = core.engine.engine_thread.adapter.current_features
-                mnq_ema = features.get('ema_200_val')
+                mnq_ema = features.get('ema_200_mnq')
                 
                 # --- NEW FEEDBACK LOGIC ---
-                if mnq_ema and state.state_manager.price_history.get('MNQ'):
-                    current_mnq_price = state.state_manager.price_history['MNQ'][-1]
-                    status_data['nasdaq_ema'] = mnq_ema
-                    status_data['nasdaq_status'] = "BULLISH" if current_mnq_price > mnq_ema else "BEARISH"
+                if mnq_ema:
+                    status_data['ema_mnq'] = round(mnq_ema, 2)
+                    status_data['nasdaq_status'] = "Connected"
                 else:
-                    # Tells the dashboard we are collecting the 200 bars
-                    status_data['nasdaq_status'] = "CALCULATING..."
-                    status_data['nasdaq_ema'] = 0.0
+                    status_data['nasdaq_status'] = "Connected"
+                    status_data['ema_mnq'] = 0.0
 
     return jsonify(status_data)
 
@@ -276,6 +329,8 @@ def set_sizing_mode():
 def kill_switch():
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
         core.engine.engine_thread.flatten_all()
+        # CRITICAL: Wipe Python memory immediately to prevent phantom exits
+        state.state_manager.clear_active_positions()
         return jsonify({'status': 'success', 'message': 'Kill switch activated. All positions flattened and trading paused.'})
     return jsonify({'status': 'error', 'message': 'Engine not running.'}), 400
 
@@ -393,6 +448,59 @@ def retrain():
     success = brain.retrain_model()
     # TODO: Add flash messaging to tell the user if it succeeded
     return redirect(url_for('index'))
+
+@app.route('/api/retrain', methods=['POST'])
+@login_required
+def api_retrain():
+    try:
+        # 1. Append trade_history to master dataset
+        if os.path.exists('trade_history.csv'):
+            df_new = pd.read_csv('trade_history.csv')
+            df_new['outcome_label'] = df_new['outcome_label'].replace('', np.nan)
+            df_new = df_new.dropna(subset=['outcome_label'])
+            
+            if 'trend_dir' in df_new.columns:
+                df_new['trend_dir_numerical'] = df_new['trend_dir'].apply(lambda x: 1 if x == 'UP' else 0)
+                
+            master_file = 'training_data.csv'
+            if not df_new.empty and not df_new.isna().all().all():
+                df_new = df_new.dropna(axis=1, how='all')
+                if os.path.exists(master_file):
+                    df_master = pd.read_csv(master_file)
+                    df_combined = pd.concat([df_master, df_new]).drop_duplicates(subset=['timestamp_id'])
+                    df_combined.to_csv(master_file, index=False)
+                else:
+                    df_new.to_csv(master_file, index=False)
+
+        # 2. Retrain ML Model
+        brain.retrain_model()
+        
+        # 3. Retrain RL Model
+        if os.path.exists('trade_history.csv'):
+            df = pd.read_csv('trade_history.csv')
+            approved_df = df[(df['user_decision'] == 'APPROVED') & (df['final_pnl'].notna())]
+            
+            if not approved_df.empty:
+                real_data_df = pd.DataFrame()
+                real_data_df['price'] = pd.to_numeric(approved_df['price'], errors='coerce')
+                real_data_df['ema_200'] = pd.to_numeric(approved_df['ema_200_val'], errors='coerce')
+                real_data_df['chop_index'] = 50.0  # Default value since it's not logged in CSV
+                real_data_df['atr'] = pd.to_numeric(approved_df['atr_volatility'], errors='coerce')
+                real_data_df['whale_strength'] = pd.to_numeric(approved_df['whale_strength'], errors='coerce')
+                
+                real_data_df = real_data_df.dropna().reset_index(drop=True)
+                
+                if not real_data_df.empty:
+                    from models.rl_agent import retrain_agent
+                    retrain_agent(real_data_df)
+
+        # 4. Reload Models in Engine
+        if core.engine.engine_thread:
+            core.engine.engine_thread.reload_models()
+            
+        return jsonify({'status': 'success', 'message': 'Models successfully synced, retrained, and reloaded.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/equity')
 @login_required

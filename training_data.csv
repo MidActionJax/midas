@@ -1,1 +1,5 @@
-timestamp_id,symbol,type,price,size,ema_200_val,trend_dir,atr_volatility,session_context,whale_strength,user_decision,final_pnl,outcome_label,trend_dir_numerical
+timestamp_id,symbol,type,price,size,ema_200_val,trend_dir,atr_volatility,session_context,whale_strength,user_decision,final_pnl,outcome_label,trend_dir_numerical,ml_confidence,Whale_ID,exit_reason
+1773347938.1164,,BUY_SIGNAL,6681.25,2.55,,,,,,APPROVED,0.0,LOSS,0,,,Exit Detected
+1773353598.8269,,BUY_SIGNAL,6683.0,2.97,,,,,,APPROVED,0.0,LOSS,0,,,Exit Detected
+1773422708.2872,,BUY_SIGNAL,6658.0,4.14,,DEV,0.0,,0.0,APPROVED,0.0,LOSS,0,,,Exit Detected
+1773423228.2793,,BUY_SIGNAL,6651.75,2.81,,DEV,0.0,,0.0,APPROVED,0.0,LOSS,0,,,Exit Detected

@@ -1,7 +1,7 @@
 import time
 import statistics
 from collections import deque, namedtuple
-from datetime import datetime
+from datetime import datetime, time as datetime_time
 import joblib
 import os
 import pandas as pd
@@ -133,19 +133,26 @@ def get_market_session():
         est = ZoneInfo('US/Eastern')
         now_est = datetime.now(est).time()
 
-        # Define session times
-        ny_open_start = time(9, 30)
-        ny_open_end = time(10, 30)
-        overlap_start = time(8, 0)
-        overlap_end = time(12, 0)
+        pre_market_start = datetime_time(4, 0)
+        ny_open_start = datetime_time(9, 30)
+        lunch_start = datetime_time(12, 0)
+        power_hour_start = datetime_time(15, 0)
+        market_close = datetime_time(16, 0)
 
-        if ny_open_start <= now_est < ny_open_end:
-            return "New York Open"
-        elif overlap_start <= now_est < overlap_end:
-            return "London/NY Overlap"
+        if now_est < pre_market_start or now_est >= market_close:
+            return "Closed"
+        elif pre_market_start <= now_est < ny_open_start:
+            return "Pre-Market"
+        elif ny_open_start <= now_est < lunch_start:
+            return "NY AM Session"
+        elif lunch_start <= now_est < power_hour_start:
+            return "Lunch Chop"
+        elif power_hour_start <= now_est < market_close:
+            return "Power Hour"
         else:
-            return "Other"
-    except Exception:
+            return "Unknown"
+    except Exception as e:
+        print(f"Error getting market session: {e}")
         return "Unknown"
 
 def is_volatility_safe(atr_mes):
@@ -289,12 +296,12 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
     if 'bids' in order_book and order_book['bids']:
         for price, size in order_book['bids']:
             if float(size) > threshold:
-                signal = {'type': 'BUY_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
+                signal = {'symbol': symbol, 'type': 'BUY_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
                 break
     if not signal and 'asks' in order_book and order_book['asks']:
         for price, size in order_book['asks']:
             if float(size) > threshold:
-                signal = {'type': 'SELL_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
+                signal = {'symbol': symbol, 'type': 'SELL_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
                 break
     
     if not signal or symbol != 'MES':
@@ -421,6 +428,7 @@ def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
         for price, size in order_book['bids']:
             if float(size) > threshold:
                 signal = {
+                    'symbol': symbol,
                     'type': 'BUY_SIGNAL',
                     'price': price,
                     'size': float(size),
@@ -434,6 +442,7 @@ def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
         for price, size in order_book['asks']:
             if float(size) > threshold:
                 signal = {
+                    'symbol': symbol,
                     'type': 'SELL_SIGNAL',
                     'price': price,
                     'size': float(size),
@@ -469,6 +478,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
 
     if current_price > rolling_high + (0.5 * atr):
         signal = {
+            'symbol': symbol,
             'type': 'BUY_SIGNAL',
             'price': current_price,
             'size': 1.0,
@@ -478,6 +488,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
         }
     elif current_price < rolling_low - (0.5 * atr):
         signal = {
+            'symbol': symbol,
             'type': 'SELL_SIGNAL',
             'price': current_price,
             'size': 1.0,
