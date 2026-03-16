@@ -23,6 +23,11 @@ features = ['atr_mes', 'atr_mnq', 'above_ema', 'in_sync', 'hour']
 X = df[features]
 y = df['label']
 
+if len(y.unique()) < 2:
+    print("Not enough diverse data (need both wins and losses). Keeping existing models.")
+    import sys
+    sys.exit(0)
+
 # 5. Split into Training (80%) and Testing (20%)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 

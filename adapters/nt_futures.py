@@ -83,7 +83,7 @@ class NTFuturesAdapter:
                             # --- EXISTING ACCOUNT LOGIC ---
                             if label == 'ACCOUNT_UPDATE':
                                 state_manager.update_account_state(
-                                    balance=message.get('ACCOUNT_VALUE', 0.0),
+                                    balance=message.get('CASH_VALUE', message.get('ACCOUNT_VALUE', 0.0)),
                                     pnl=message.get('DAILY_PNL', 0.0),
                                     sync_time=datetime.now()
                                 )
@@ -250,6 +250,15 @@ class NTFuturesAdapter:
                     self.current_features['ema_200_val'] = current_ema
                 
                 self.current_features['above_ema'] = price > self.current_features['ema_200_val']
+                
+            # Calculate EMA 200 for MNQ
+            if symbol == 'MNQ' and len(self.price_history['MNQ']) >= 200:
+                if self.current_features.get('ema_200_mnq') is None:
+                    self.current_features['ema_200_mnq'] = sum(self.price_history['MNQ']) / 200
+                else:
+                    smoothing = 2 / (200 + 1)
+                    current_ema = (price * smoothing) + (self.current_features['ema_200_mnq'] * (1 - smoothing))
+                    self.current_features['ema_200_mnq'] = current_ema
                 
             # 3. Correlation Check
             if len(self.price_history['MES']) > 20 and len(self.price_history['MNQ']) > 20:

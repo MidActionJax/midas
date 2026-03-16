@@ -92,7 +92,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     try {
                         // 2. Check Values
                         double currentPnl = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                        double balance = account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+                        double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
                         Print(string.Format("2. Data Pulled - Balance: {0}, PnL: {1}", balance, currentPnl));
 
                         // 3. Check JSON Construction

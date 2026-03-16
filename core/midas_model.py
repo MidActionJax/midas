@@ -111,7 +111,7 @@ class MidasBrain:
                 return False
             
             if len(df['outcome_label'].unique()) < 2:
-                print("Warning: Only one class present. Cannot train.")
+                print("Not enough diverse data (need both wins and losses). Keeping existing models.")
                 return False
 
             X_train, X_test, y_train, y_test = train_test_split(
@@ -163,4 +163,3 @@ if __name__ == '__main__':
     if brain_no_model.model:
         confidence_model = brain_no_model.get_confidence_score(mock_features)
         print(f"Model-based Confidence: {confidence_model}%")
-

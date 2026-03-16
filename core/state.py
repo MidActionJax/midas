@@ -121,6 +121,10 @@ class StateManager:
             if pos in self.active_positions:
                 self.active_positions.remove(pos)
 
+    def clear_active_positions(self):
+        with self._lock:
+            self.active_positions.clear()
+
     def get_active_positions(self):
         with self._lock:
             return list(self.active_positions)
