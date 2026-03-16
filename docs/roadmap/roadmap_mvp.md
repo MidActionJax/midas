@@ -176,3 +176,5 @@ The Goal: Guarantee that once we are "in the green," we never let a winning trad
 - at the top where it says "Order Flow "Grey Box" System" its boring. we need a catch phrase
 - loud cha-ching when a trade pops up so ik to look over and approve
 - 3-Month Deep Dive to 1 full year of data
+- Market Session always says Unknown
+- Realized PnL: i think always stays at 0.00
