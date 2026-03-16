@@ -107,17 +107,35 @@ class MidasEngine(threading.Thread):
                     entry_price = pos.get('entry_price')
                     
                     if current_price and entry_price:
-                        target = 1.50 # Keep your 2-tick test value
                         is_long = pos_type == 'LONG'
                         
-                        hit_tp = (is_long and current_price >= entry_price + target) or \
-                                 (not is_long and current_price <= entry_price - target)
-                        hit_sl = (is_long and current_price <= entry_price - target) or \
-                                 (not is_long and current_price >= entry_price + target)
+                        # --- TIGHTER MICRO-PROFIT PROTECTORS ---
+                        points_profit = (current_price - entry_price) if is_long else (entry_price - current_price)
+                        
+                        if 'dynamic_sl' not in pos:
+                            pos['dynamic_sl'] = -4.0 # Default SL to 4 points as a safety net
+                            
+                        # The order here is important: check from highest profit target downwards.
+                        if points_profit >= 2.75:
+                            if pos['dynamic_sl'] < 2.00:
+                                pos['dynamic_sl'] = 2.00
+                                print(f"--- TRAILING STOP (STEP 2): {pos_symbol} SL moved to +2.00 points ---")
+                        elif points_profit >= 1.75:
+                            if pos['dynamic_sl'] < 1.00:
+                                pos['dynamic_sl'] = 1.00
+                                print(f"--- TRAILING STOP (STEP 1): {pos_symbol} SL moved to +1.00 point ---")
+                        elif points_profit >= 1.25:
+                            if pos['dynamic_sl'] < 0.25:
+                                pos['dynamic_sl'] = 0.25
+                                print(f"--- AUTO-BREAKEVEN: {pos_symbol} SL moved to +0.25 points ---")
                                  
+                        hit_tp = points_profit >= 4.0 # Hard 4 points TP
+                        hit_sl = points_profit <= pos['dynamic_sl']
+                        
                         if hit_tp or hit_sl:
                             side = 'SELL' if is_long else 'BUY'
-                            print(f"!!! SNIPER TRIGGERED: Closing {pos_symbol} at {current_price} !!!")
+                            exit_reason = "TAKE PROFIT" if hit_tp else "STOP/TRAILING"
+                            print(f"!!! SNIPER TRIGGERED ({exit_reason}): Closing {pos_symbol} at {current_price} !!!")
                             
                             try:
                                 if side == 'SELL':
@@ -144,7 +162,7 @@ class MidasEngine(threading.Thread):
                     state.state_manager.add_pnl(final_pnl)
                     state.state_manager.remove_position(pos)
                     
-                    print(f"--- TRADE CLOSED: {pos_symbol} | PnL: ${final_pnl} ---")
+                    print(f"--- EXIT DETECTED: {final_pnl} ---")
                     self.last_trade_time = time.time()
         except Exception as e:
             print(f"Error in manage_positions: {e}")
@@ -197,6 +215,16 @@ class MidasEngine(threading.Thread):
                             print(f"Could not fetch price for {symbol}. Skipping analysis.")
                             continue
                             
+                        # --- SANITY CHECK FIREWALL ---
+                        last_price = None
+                        if len(state.state_manager.price_history.get(symbol, [])) > 0:
+                            last_price = state.state_manager.price_history[symbol][-1]
+                            
+                        if last_price is not None and last_price > 0:
+                            if abs(price - last_price) / last_price > 0.05:
+                                print(f"❌ ANOMALY FIREWALL: Engine rejected cross-wired price for {symbol}. {last_price} -> {price}")
+                                continue
+
                         print(f"HEARTBEAT: Price of {symbol} is {price}")
                         state.state_manager.add_price(symbol, price)
                         self.price_buffer[symbol].append(price)
@@ -285,25 +313,94 @@ class MidasEngine(threading.Thread):
                                 )
 
                             if signal:
-                                # --- AI VETO LOGIC ---
-                                vetoed = False
-                                if self.rl_model:
-                                    if signal['type'] == 'BUY_SIGNAL' and ai_action == 2:
-                                        print("!!! AI VETO: RL Agent disagrees with Strategy Manager !!!")
-                                        vetoed = True
-                                    elif signal['type'] == 'SELL_SIGNAL' and ai_action == 1:
-                                        print("!!! AI VETO: RL Agent disagrees with Strategy Manager !!!")
-                                        vetoed = True
+                                # --- CALC MARKET SYNC ---
+                                correlation_score = 0.0
+                                try:
+                                    mes_hist = state.state_manager.price_history.get('MES', [])[-50:]
+                                    mnq_hist = state.state_manager.price_history.get('MNQ', [])[-50:]
+                                    if len(mes_hist) >= 20 and len(mnq_hist) >= 20:
+                                        min_len = min(len(mes_hist), len(mnq_hist))
+                                        df_corr = pd.DataFrame({'MES': mes_hist[-min_len:], 'MNQ': mnq_hist[-min_len:]})
+                                        
+                                        if df_corr['MES'].std() == 0 or df_corr['MNQ'].std() == 0:
+                                            correlation_score = 1.0 # Perfect Sync fallback
+                                        else:
+                                            corr_val = df_corr['MES'].corr(df_corr['MNQ'])
+                                            if pd.notna(corr_val):
+                                                correlation_score = float(corr_val)
+                                except Exception:
+                                    pass
 
-                                if not vetoed:
-                                    pending_signals = state.state_manager.get_pending_signals()
-                                    is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
+                                # --- DECISION TRACE ---
+                                print(f"--- SIGNAL TRACE [{symbol}] ---")
+                                
+                                # 0. Core Strategy Filters (Trend & Volatility)
+                                trend_pass = signal.get('trend_pass', True)
+                                vol_pass = signal.get('volatility_pass', True)
+                                
+                                if not trend_pass:
+                                    print(f"[CHECK] Trend Filter: [FAIL] (Market is {signal.get('trend', 'Unknown')})")
+                                else:
+                                    print(f"[CHECK] Trend Filter: [PASS]")
                                     
-                                    if not is_duplicate:
-                                        state.state_manager.add_pending_signal(signal)
-                                        reason = signal.get('reason', 'Unknown')
-                                        confidence_score_str = f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)'
-                                        print(f"!!! NEW SIGNAL [{reason}]: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
+                                if not vol_pass:
+                                    print(f"[CHECK] Volatility Filter: [FAIL] (ATR {signal.get('atr', 0.0):.2f})")
+                                else:
+                                    print(f"[CHECK] Volatility Filter: [PASS]")
+                                
+                                # 1. Market Regime Check
+                                print(f"[CHECK] Market Regime: [PASS] ({chop_index:.2f})")
+
+                                # 2. ML Confidence & Dynamic Thresholds
+                                ml_pass = True
+                                ml_val = signal.get('ml_confidence_value')
+                                ml_threshold = 70.0
+                                
+                                if correlation_score > 0.90:
+                                    ml_threshold = 60.0
+                                    print(f"[ADJUSTMENT] High Sync detected! Lowering ML threshold to 60%.")
+
+                                if ml_val is not None:
+                                    if ml_val >= ml_threshold:
+                                        print(f"[CHECK] ML Confidence: [PASS] ({ml_val:.2f}%)")
+                                    else:
+                                        print(f"[CHECK] ML Confidence: [FAIL] ({ml_val:.2f}%)")
+                                        ml_pass = False
+                                else:
+                                    print(f"[CHECK] ML Confidence: [FAIL] (No ML score provided by strategy)")
+                                    ml_pass = False
+
+                                # 3. RL Supervisor
+                                rl_pass = True
+                                if self.rl_model:
+                                    ai_action_str = {0: 'HOLD', 1: 'BUY', 2: 'SELL'}.get(ai_action, 'UNKNOWN')
+                                    if signal['type'] == 'BUY_SIGNAL' and ai_action == 2:
+                                        rl_pass = False
+                                    elif signal['type'] == 'SELL_SIGNAL' and ai_action == 1:
+                                        rl_pass = False
+                                        
+                                    rl_status = "PASS" if rl_pass else "FAIL"
+                                    print(f"[CHECK] RL Supervisor: [{rl_status}] ({ai_action_str})")
+                                else:
+                                    print(f"[CHECK] RL Supervisor: [PASS] (N/A - No Model)")
+
+                                # FINAL DECISION
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass):
+                                    print("--- FINAL DECISION: [VETOED] ---")
+                                    if not state.state_manager.dev_mode:
+                                        continue
+                                
+                                print("--- FINAL DECISION: [EXECUTED] ---")
+                                pending_signals = state.state_manager.get_pending_signals()
+                                is_duplicate = any(s['price'] == signal['price'] and s['type'] == signal['type'] for s in pending_signals)
+                                
+                                if not is_duplicate:
+                                    if 'context_data' in signal:
+                                        logger.log_signal(signal, signal['context_data'], 'PENDING')
+                                    state.state_manager.add_pending_signal(signal)
+                                    reason = signal.get('reason', 'Unknown')
+                                    confidence_score_str = signal.get('ml_confidence', f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)')
+                                    print(f"!!! NEW SIGNAL [{reason}]: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")

@@ -152,9 +152,13 @@ def status():
         if len(mes_hist) >= 20 and len(mnq_hist) >= 20:
             min_len = min(len(mes_hist), len(mnq_hist))
             df_corr = pd.DataFrame({'MES': mes_hist[-min_len:], 'MNQ': mnq_hist[-min_len:]})
-            corr_val = df_corr['MES'].corr(df_corr['MNQ'])
-            if pd.notna(corr_val):
-                correlation_score = float(corr_val)
+            
+            if df_corr['MES'].std() == 0 or df_corr['MNQ'].std() == 0:
+                correlation_score = 1.0 # Perfect Sync fallback
+            else:
+                corr_val = df_corr['MES'].corr(df_corr['MNQ'])
+                if pd.notna(corr_val):
+                    correlation_score = float(corr_val)
     except Exception as e:
         print(f"Error calculating correlation: {e}")
 
@@ -318,15 +322,16 @@ def approve_signal(signal_id):
             price, 
             state.state_manager.price_history
         )
+        
+        exec_price = signal_to_execute.get('price', price)
 
         if signal_to_execute['type'] == 'BUY_SIGNAL':
-            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, price, signal_id=signal_id)
+            trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
             
             if trade_executed:
-                entry_price = price
                 position = {
                     'symbol': config.TRADING_SYMBOL,
-                    'entry_price': price,
+                    'entry_price': exec_price,
                     'size': dynamic_size,
                     'type': 'BUY', # Or 'SELL' in the other block
                     # FIX: Start a fresh timer for the Grace Period
@@ -337,13 +342,12 @@ def approve_signal(signal_id):
                 state.state_manager.add_position(position)
 
         elif signal_to_execute['type'] == 'SELL_SIGNAL':
-            trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, signal_id=signal_id)
+            trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
             
             if trade_executed:
-                entry_price = price # Or get it from sell execution if different
                 position = {
                     'symbol': config.TRADING_SYMBOL,
-                    'entry_price': price,
+                    'entry_price': exec_price,
                     'size': dynamic_size,
                     'type': 'SELL', # Or 'SELL' in the other block
                     # FIX: Start a fresh timer for the Grace Period
