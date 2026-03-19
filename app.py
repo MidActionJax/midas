@@ -232,6 +232,7 @@ def status():
         'sizing_mode': sizing_mode,
         'execution_log': execution_log,
         'dev_mode': state.state_manager.dev_mode,
+        'auto_buy_enabled': state.state_manager.auto_buy_enabled,
         'chop_index': state.state_manager.current_chop_index,
         'correlation_score': correlation_score,
         'pnl_labels': pnl_labels,
@@ -341,6 +342,13 @@ def toggle_dev():
     new_mode = state.state_manager.toggle_dev_mode()
     return jsonify({'status': 'success', 'dev_mode': new_mode})
 
+@app.route('/toggle_auto_buy', methods=['POST'])
+@login_required
+def toggle_auto_buy():
+    """Toggles the auto-buy mode."""
+    new_mode = state.state_manager.toggle_auto_buy()
+    return jsonify({'status': 'success', 'auto_buy_enabled': new_mode})
+
 @app.route('/approve_signal/<string:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):
@@ -380,7 +388,17 @@ def approve_signal(signal_id):
         
         exec_price = signal_to_execute.get('price', price)
 
+        # --- TASK 1: LIVE POSITION HARD GUARD & REVERSAL LOGIC ---
+        current_pos = getattr(state.state_manager, 'live_nt_positions', {}).get(config.TRADING_SYMBOL, 0)
+
         if signal_to_execute['type'] == 'BUY_SIGNAL':
+            if current_pos > 0:
+                return jsonify({'status': 'error', 'message': 'Hard Guard: Already Long. Blocked.'}), 400
+            elif current_pos < 0:
+                print(f"--- REVERSAL: Flattening Short {abs(current_pos)} before Long Entry ---")
+                adapter.execute_buy(config.TRADING_SYMBOL, abs(current_pos), exec_price, signal_id='REVERSAL')
+                time.sleep(0.5)
+
             trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
             
             if trade_executed:
@@ -397,6 +415,13 @@ def approve_signal(signal_id):
                 state.state_manager.add_position(position)
 
         elif signal_to_execute['type'] == 'SELL_SIGNAL':
+            if current_pos < 0:
+                return jsonify({'status': 'error', 'message': 'Hard Guard: Already Short. Blocked.'}), 400
+            elif current_pos > 0:
+                print(f"--- REVERSAL: Flattening Long {current_pos} before Short Entry ---")
+                adapter.execute_sell(config.TRADING_SYMBOL, current_pos, exec_price, signal_id='REVERSAL')
+                time.sleep(0.5)
+
             trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
             
             if trade_executed:

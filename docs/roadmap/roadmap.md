@@ -166,9 +166,48 @@ The Labeler: When the rhythm is detected, the bot flags it: "Institutional Patte
 The Intelligence: We feed that flag into the Truth Engine. The ML model will then learn: "Whenever Rhythmic-50 is buying and we are above the 200 EMA, the trade has a 92% success rate".
 
 ---
+🗺️ The Level 2 Deep Learning Roadmap
+Phase 1: The "C# Vacuum" (Data Harvesting)
+We cannot rely on Python to record the Level 2 data; it is too slow, and it will crash your connection.
+
+The Action: We will write a lightweight C# script (a NinjaScript) that lives directly inside NinjaTrader.
+
+The Process: You download 1–3 months of Market Replay data for the MES. You attach this C# script to a chart, set the replay to "Max Speed," and hit play.
+
+The Result: The script acts as a vacuum, bypassing your network port entirely and dumping millions of rows of pristine, millisecond-accurate Level 2 order book updates straight into a massive CSV file on your hard drive.
+
+Phase 2: The "Story Maker" (Data Preparation & Labeling)
+An ML model cannot just look at raw numbers and figure out what to do. We have to give it a "Target" so it knows what it is looking for. We don't tell it how to find a trade, we just tell it what a successful trade looks like.
+
+The Action: We write a Python script (using the pandas library) to scan through your giant new CSV file.
+
+The Target: We program it to find every single time the price jumped exactly 2 points within a 60-second window. We label those exact moments in the data as 1 (Success). Everything else is a 0 (Noise).
+
+The Result: A perfectly labeled dataset. We now have the complete Level 2 "story" of what the order book looked like in the minutes immediately preceding a massive price spike.
+
+Phase 3: The "Black Box" (Deep Representation Learning)
+This is where we unleash the AI. We stop writing "if/then" rules and hand the keys over to a Deep Learning model (likely an algorithm called XGBoost or a Neural Network).
+
+The Action: We feed the labeled dataset into the model. We tell it: "Here are 5,000 examples of the price jumping 2 points. Look at the Level 2 data leading up to these moments and figure out the pattern yourself."
+
+The Process: The ML will spend hours crunching the numbers. It will build its own internal "checklist." It might discover that a 2-point jump happens when 300 contracts stack on the bid while the ask side empties out—something a human would never catch in real-time.
+
+The Result: A trained model.pkl file. This is the new, hyper-intelligent brain of Midas.
+
+Phase 4: The Simulation & Live Deployment
+We do not put real money on this immediately. We have to make sure the model didn't just memorize the past (overfitting).
+
+The Action: We plug the new brain into engine.py.
+
+The Process: We run Midas in PAPER mode on live market data for a week. We let it read the live Level 2 order book and fire its predictions.
+
+The Result: If it consistently hits that 40%+ win rate with strict risk management, we take it off the leash and let it trade real capital.
+
+---
 ## Backlog!!
 - 3 months of data
 - Lower thresholds
 - check buying/selling?
 - Kill switch, close all positions on dashboard
 - RuntimeWarning: invalid value encountered in divide
+- 1 day. replay? level 2 data. let it discover and train on its own. learn patters on its own. no guidance. 

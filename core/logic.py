@@ -133,21 +133,29 @@ def get_market_session():
         est = ZoneInfo('US/Eastern')
         now_est = datetime.now(est).time()
 
-        pre_market_start = datetime_time(4, 0)
-        ny_open_start = datetime_time(9, 30)
-        lunch_start = datetime_time(12, 0)
-        power_hour_start = datetime_time(15, 0)
-        market_close = datetime_time(16, 0)
+        open_end = datetime_time(10, 30)
+        trend_est_end = datetime_time(11, 30)
+        lunch_chop_end = datetime_time(13, 30)
+        reset_end = datetime_time(15, 0)
+        power_hour_end = datetime_time(16, 0)
+        halt_end = datetime_time(18, 0)
+        asian_end = datetime_time(6, 0)
 
-        if now_est < pre_market_start or now_est >= market_close:
-            return "Closed"
-        elif pre_market_start <= now_est < ny_open_start:
+        if now_est >= power_hour_end and now_est < halt_end:
+            return "Market Halt"
+        elif now_est >= halt_end or now_est < asian_end:
+            return "Overnight"
+        elif now_est < datetime_time(9, 30):
             return "Pre-Market"
-        elif ny_open_start <= now_est < lunch_start:
-            return "NY AM Session"
-        elif lunch_start <= now_est < power_hour_start:
+        elif now_est < open_end:
+            return "The Open"
+        elif now_est < trend_est_end:
+            return "Trend Est."
+        elif now_est < lunch_chop_end:
             return "Lunch Chop"
-        elif power_hour_start <= now_est < market_close:
+        elif now_est < reset_end:
+            return "The Reset"
+        elif now_est < power_hour_end:
             return "Power Hour"
         else:
             return "Unknown"
@@ -155,11 +163,56 @@ def get_market_session():
         print(f"Error getting market session: {e}")
         return "Unknown"
 
-def is_volatility_safe(atr_mes):
+def get_dynamic_thresholds():
+    """
+    Dynamic Session Profiler: Returns the minimum ML confidence required 
+    based on the time of day to ensure 'High-Probability Sniper' trading.
+    Maps PST timeblocks to EST.
+    """
+    try:
+        est = ZoneInfo('US/Eastern')
+        now_est = datetime.now(est).time()
+
+        open_end = datetime_time(10, 30)        # 6:30 - 7:30 PST -> 9:30 - 10:30 EST
+        trend_est_end = datetime_time(11, 30)   # 7:30 - 8:30 PST -> 10:30 - 11:30 EST
+        lunch_chop_end = datetime_time(13, 30)  # 8:30 - 10:30 PST -> 11:30 - 13:30 EST
+        reset_end = datetime_time(15, 0)        # 10:30 - 12:00 PST -> 13:30 - 15:00 EST
+        power_hour_end = datetime_time(16, 0)   # 12:00 - 1:00 PST -> 15:00 - 16:00 EST
+        
+        # MARKET HALT: 16:00 to 18:00 EST (1:00 PM - 3:00 PM MST)
+        halt_end = datetime_time(18, 0)
+        # ASIAN SESSION: 18:00 to 06:00 EST (3:00 PM - 4:00 AM MST)
+        asian_end = datetime_time(6, 0)
+
+        if now_est >= power_hour_end and now_est < halt_end:
+            return {'min_confidence': 100.0, 'halt': True, 'min_atr': 2.0, 'strategy': 'NONE'}
+        elif now_est >= halt_end or now_est < asian_end:
+            return {'min_confidence': 60.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
+
+        if now_est < datetime_time(9, 30):
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.0, 'strategy': 'ALL'}  # Pre-market
+        elif now_est < open_end:
+            return {'min_confidence': 54.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}  # The Open
+        elif now_est < trend_est_end:
+            return {'min_confidence': 55.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # Trend Est.
+        elif now_est < lunch_chop_end:
+            return {'min_confidence': 65.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # Lunch Chop
+        elif now_est < reset_end:
+            return {'min_confidence': 55.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # The Reset
+        elif now_est < power_hour_end:
+            return {'min_confidence': 54.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}  # Power Hour
+        else:
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}  # After hours
+    except Exception as e:
+        return {'min_confidence': 75.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}
+
+def is_volatility_safe(current_atr, session_min_atr=2.0):
     """
     Checks if the market volatility is within a safe range.
     """
-    return 2.0 <= atr_mes <= 15.0
+    if current_atr >= session_min_atr:
+        return True
+    return False
 
 def calculate_whale_strength(iceberg_size, order_book):
     """
@@ -334,13 +387,23 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
     trend_mes = "BULLISH" if current_price_mes > ema_mes else "BEARISH"
     signal['trend'] = trend_mes
-    signal['trend_pass'] = (trend_mes == "BULLISH" and signal['type'] == 'BUY_SIGNAL') or \
-                           (trend_mes == "BEARISH" and signal['type'] == 'SELL_SIGNAL')
+    
+    signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
+    market_trend = trend_mes
+    
+    if signal_direction == 'BUY' and market_trend == 'BULLISH':
+        signal['trend_pass'] = True
+    elif signal_direction == 'SELL' and market_trend == 'BEARISH':
+        signal['trend_pass'] = True
+    else:
+        signal['trend_pass'] = False
     
     # --- THE 4TH KEY: Volatility Gate ---
     atr_mes = get_current_atr(price_history_mes)
     signal['atr'] = atr_mes
-    signal['volatility_pass'] = is_volatility_safe(atr_mes)
+    thresholds = get_dynamic_thresholds()
+    min_atr = thresholds.get('min_atr', 2.0) if isinstance(thresholds, dict) else 2.0
+    signal['volatility_pass'] = is_volatility_safe(atr_mes, min_atr)
         
     # --- THE TRUTH ENGINE: ML Veto ---
     if TRUTH_ENGINE:
@@ -456,44 +519,43 @@ def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
 
 def analyze_breakout(symbol, order_book, price_history, chop_index):
     """
-    Breakout strategy for birthing trends.
+    Breakout strategy for birthing trends (Momentum Surfer).
     """
     if chop_index >= 38.2 or symbol != 'MES':
         return None
 
-    if len(price_history) < 21:
+    if len(price_history) < 15:
         return None
 
-    # Use previous 20 periods so current price can actually "break out" of the historical range
-    recent_prices = price_history[-21:-1]
-    rolling_high = max(recent_prices)
-    rolling_low = min(recent_prices)
-
+    ema_5 = calculate_ema(price_history, period=5)
     atr = get_current_atr(price_history, period=14)
-    if atr == 0.0:
+    
+    if ema_5 is None or atr == 0.0:
         return None
 
     current_price = price_history[-1]
     signal = None
 
-    if current_price > rolling_high + (0.5 * atr):
+    if current_price > (ema_5 + (1.0 * atr)):
         signal = {
             'symbol': symbol,
             'type': 'BUY_SIGNAL',
             'price': current_price,
             'size': 1.0,
-            'reason': 'Breakout',
+            'reason': 'Momentum Surfer',
             'confidence_score': 80.0,
+            'ml_confidence_value': 85.0,
             'timestamp': round(time.time(), 4)
         }
-    elif current_price < rolling_low - (0.5 * atr):
+    elif current_price < (ema_5 - (1.0 * atr)):
         signal = {
             'symbol': symbol,
             'type': 'SELL_SIGNAL',
             'price': current_price,
             'size': 1.0,
-            'reason': 'Breakout',
+            'reason': 'Momentum Surfer',
             'confidence_score': 80.0,
+            'ml_confidence_value': 85.0,
             'timestamp': round(time.time(), 4)
         }
 

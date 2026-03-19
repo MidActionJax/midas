@@ -87,6 +87,19 @@ class NTFuturesAdapter:
                                     pnl=message.get('DAILY_PNL', 0.0),
                                     sync_time=datetime.now()
                                 )
+                                # --- TASK 1: LIVE POSITION SYNC ---
+                                pos_symbol = message.get('POSITION_SYMBOL')
+                                pos_qty = message.get('POSITION_QUANTITY')
+                                if pos_symbol is not None and pos_qty is not None:
+                                    if not hasattr(state_manager, 'live_nt_positions'):
+                                        state_manager.live_nt_positions = {}
+                                    state_manager.live_nt_positions[pos_symbol] = pos_qty
+                                    
+                                    # Sync state.active_positions if flat
+                                    if pos_qty == 0:
+                                        for pos in list(state_manager.get_active_positions()):
+                                            if pos.get('symbol') == pos_symbol:
+                                                state_manager.remove_position(pos)
 
                             # --- NEW TAPE SCANNER LOGIC ---
                             elif label == 'TRADE':

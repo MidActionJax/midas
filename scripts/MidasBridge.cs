@@ -95,12 +95,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                         double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
                         Print(string.Format("2. Data Pulled - Balance: {0}, PnL: {1}", balance, currentPnl));
 
+                        int currentPos = 0;
+                        Position pos = account.Positions.FirstOrDefault(p => p.Instrument.MasterInstrument.Name == Instrument.MasterInstrument.Name);
+                        if (pos != null) {
+                            currentPos = pos.MarketPosition == MarketPosition.Long ? pos.Quantity : (pos.MarketPosition == MarketPosition.Short ? -pos.Quantity : 0);
+                        }
+
                         // 3. Check JSON Construction
                         string json = "{" +
                             "\"LABEL\":\"ACCOUNT_UPDATE\"," +
                             "\"ACCOUNT_VALUE\":" + balance + "," +
                             "\"DAILY_PNL\":" + currentPnl + "," +
-                            "\"CASH_VALUE\":" + account.Get(AccountItem.CashValue, Currency.UsDollar) +
+                            "\"CASH_VALUE\":" + account.Get(AccountItem.CashValue, Currency.UsDollar) + "," +
+                            "\"POSITION_SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
+                            "\"POSITION_QUANTITY\":" + currentPos +
                         "}";
                         Print("3. JSON Created.");
 
