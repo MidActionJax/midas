@@ -34,7 +34,11 @@ class StateManager:
         self.live_wins = 0
         self.live_trades = 0
         self.dev_mode = False # Add dev_mode
+        self.auto_buy_enabled = False
+        self.last_trade_time = 0
         self.current_chop_index = 50.0
+        self.MAX_DAILY_LOSS = -250.00
+        self.circuit_breaker_tripped = False
         self.state_file = state_file
         self.load_price_history()
 
@@ -44,6 +48,13 @@ class StateManager:
             self.dev_mode = not self.dev_mode
             print(f"--- Developer Mode set to: {self.dev_mode} ---")
         return self.dev_mode
+
+    def toggle_auto_buy(self):
+        """Toggles the auto-buy mode."""
+        with self._lock:
+            self.auto_buy_enabled = not self.auto_buy_enabled
+            print(f"--- Auto-Buy Mode set to: {self.auto_buy_enabled} ---")
+        return self.auto_buy_enabled
 
     @property
     def is_kill_switch_active(self):

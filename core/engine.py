@@ -83,10 +83,18 @@ class MidasEngine(threading.Thread):
             
             if current_price:
                 try:
+                    # --- HARD GUARD ---
+                    current_pos = getattr(state.state_manager, 'live_nt_positions', {}).get(pos_symbol, 0)
                     if pos_type == 'LONG':
-                        self.adapter.execute_sell(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                        if current_pos < 0:
+                            print(f"!!! HARD GUARD: Blocked Kill Switch SELL for {pos_symbol} (Already Short) !!!")
+                        else:
+                            self.adapter.execute_sell(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
                     else:
-                        self.adapter.execute_buy(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                        if current_pos > 0:
+                            print(f"!!! HARD GUARD: Blocked Kill Switch BUY for {pos_symbol} (Already Long) !!!")
+                        else:
+                            self.adapter.execute_buy(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
                     pos['exit_triggered'] = True
                 except Exception as ex:
                     print(f"Error executing kill switch exit: {ex}")
@@ -148,33 +156,44 @@ class MidasEngine(threading.Thread):
                         if 'dynamic_sl' not in pos:
                             pos['dynamic_sl'] = -4.0 # Default SL to 4 points as a safety net
                             
-                        # The order here is important: check from highest profit target downwards.
-                        if points_profit >= 2.75:
-                            if pos['dynamic_sl'] < 2.00:
-                                pos['dynamic_sl'] = 2.00
-                                print(f"--- TRAILING STOP (STEP 2): {pos_symbol} SL moved to +2.00 points ---")
-                        elif points_profit >= 1.75:
-                            if pos['dynamic_sl'] < 1.00:
-                                pos['dynamic_sl'] = 1.00
-                                print(f"--- TRAILING STOP (STEP 1): {pos_symbol} SL moved to +1.00 point ---")
-                        elif points_profit >= 1.25:
-                            if pos['dynamic_sl'] < 0.25:
-                                pos['dynamic_sl'] = 0.25
-                                print(f"--- AUTO-BREAKEVEN: {pos_symbol} SL moved to +0.25 points ---")
+                        # --- TASK 2: INSTANT AUTO-BREAKEVEN & TIGHT TRAIL ---
+                        if points_profit >= 1.0:
+                            new_sl = points_profit - 1.0
+                            if new_sl > pos['dynamic_sl']:
+                                pos['dynamic_sl'] = new_sl
+                                print(f"--- AUTO-BREAKEVEN / TRAIL: {pos_symbol} SL moved to +{new_sl:.2f} points ---")
                                  
                         hit_tp = points_profit >= 4.0 # Hard 4 points TP
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
-                        if hit_tp or hit_sl:
+                        # --- TASK 1: 45-SECOND KILL SWITCH ---
+                        time_open = time.time() - pos.get('timestamp', time.time())
+                        hit_time_kill = time_open >= 45 and points_profit <= 0
+                        
+                        if hit_tp or hit_sl or hit_time_kill:
                             side = 'SELL' if is_long else 'BUY'
-                            exit_reason = "TAKE PROFIT" if hit_tp else "STOP/TRAILING"
+                            if hit_tp:
+                                exit_reason = "TAKE PROFIT"
+                            elif hit_time_kill:
+                                exit_reason = "45-SECOND EJECT"
+                                print("!!! EJECT: 45-second rule triggered. Trade stagnant/reversing. !!!")
+                            else:
+                                exit_reason = "STOP/TRAILING"
+                                
                             print(f"!!! SNIPER TRIGGERED ({exit_reason}): Closing {pos_symbol} at {current_price} !!!")
                             
                             try:
-                                if side == 'SELL':
-                                    self.adapter.execute_sell(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                                # --- HARD GUARD: Right before executing exit PLACE_ORDER ---
+                                current_pos = getattr(state.state_manager, 'live_nt_positions', {}).get(pos_symbol, 0)
+                                if side == 'BUY' and current_pos > 0:
+                                    print(f"!!! HARD GUARD: Blocked Exit BUY for {pos_symbol} (Already Long) !!!")
+                                elif side == 'SELL' and current_pos < 0:
+                                    print(f"!!! HARD GUARD: Blocked Exit SELL for {pos_symbol} (Already Short) !!!")
                                 else:
-                                    self.adapter.execute_buy(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                                    if side == 'SELL':
+                                        self.adapter.execute_sell(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
+                                    else:
+                                        self.adapter.execute_buy(pos_symbol, pos.get('size', 1), current_price, signal_id=pos.get('signal_timestamp'))
                                 
                                 # Tag the position so it doesn't machine-gun NinjaTrader
                                 pos['exit_triggered'] = True 
@@ -257,6 +276,12 @@ class MidasEngine(threading.Thread):
                 try:
                     # --- Manage existing positions first ---
                     self.manage_positions()
+
+                    # --- GLOBAL CIRCUIT BREAKER ---
+                    if state.state_manager.daily_pnl <= state.state_manager.MAX_DAILY_LOSS and not state.state_manager.circuit_breaker_tripped:
+                        state.state_manager.circuit_breaker_tripped = True
+                        print("🛑 CIRCUIT BREAKER TRIPPED: Max Daily Loss Reached. Engine disabled for the day.")
+                        self.flatten_all()
 
                     if self.is_paused:
                         time.sleep(1)
@@ -353,7 +378,21 @@ class MidasEngine(threading.Thread):
                             # --- STRATEGY MANAGER ---
                             signal = None
 
-                            if chop_index > 61.8:
+                            thresholds = logic.get_dynamic_thresholds()
+                            if isinstance(thresholds, float):
+                                thresholds = {'min_confidence': thresholds, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}
+
+                            if thresholds['halt']:
+                                pass
+                            elif thresholds['strategy'] == 'MEAN_REVERSION':
+                                print(f"--- REGIME: OVERNIGHT -> Activating Mean Reversion Strategy ---")
+                                signal = logic.analyze_mean_reversion(
+                                    symbol,
+                                    market_depth,
+                                    state.state_manager.price_history.get(symbol, []),
+                                    100.0  # Force it to pass chop index check
+                                )
+                            elif chop_index > 61.8:
                                 # Ranging Market -> Mean Reversion
                                 print(f"--- REGIME: RANGING ({chop_index:.2f}) -> Activating Mean Reversion Strategy ---")
                                 signal = logic.analyze_mean_reversion(
@@ -373,7 +412,8 @@ class MidasEngine(threading.Thread):
                                 )
                             else:  # 38.2 <= chop_index <= 61.8
                                 # Standard/Choppy Market -> Iceberg
-                                print(f"--- REGIME: STANDARD ({chop_index:.2f}) -> Activating Iceberg Strategy ---")
+                                session_name = logic.get_market_session()
+                                print(f"--- ACTIVE PROFILE: {session_name} ---")
                                 signal = logic.analyze_order_book(
                                     symbol, market_depth, state.state_manager.price_history, self.adapter
                                 )
@@ -401,11 +441,41 @@ class MidasEngine(threading.Thread):
                                 print(f"--- SIGNAL TRACE [{symbol}] ---")
                                 
                                 # 0. Core Strategy Filters (Trend & Volatility)
-                                trend_pass = signal.get('trend_pass', True)
+                                trend = signal.get('trend')
+                                market_trend = trend
+                                signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
+                                
+                                if market_trend in ['BULLISH', 'BEARISH']:
+                                    if signal_direction == 'BUY' and market_trend == 'BULLISH':
+                                        trend_pass = True
+                                    elif signal_direction == 'SELL' and market_trend == 'BEARISH':
+                                        trend_pass = True
+                                    else:
+                                        trend_pass = False
+                                    signal['trend_pass'] = trend_pass
+                                else:
+                                    trend_pass = signal.get('trend_pass', True)
+                                
+                                if 'Momentum' in signal.get('reason', ''):
+                                    trend_pass = True
+
                                 vol_pass = signal.get('volatility_pass', True)
                                 
+                                atr = signal.get('atr')
+                                if atr is None:
+                                    atr = logic.get_current_atr(state.state_manager.price_history.get(symbol, []))
+                                    signal['atr'] = atr
+                                
+                                current_atr = atr
+                                session_min_atr = thresholds['min_atr']
+                                if current_atr >= session_min_atr:
+                                    vol_pass = True
+                                else:
+                                    vol_pass = False
+                                signal['volatility_pass'] = vol_pass
+                                
                                 if not trend_pass:
-                                    print(f"[CHECK] Trend Filter: [FAIL] (Market is {signal.get('trend', 'Unknown')})")
+                                    print(f"[CHECK] Trend Filter: [FAIL] (Market is {market_trend})")
                                 else:
                                     print(f"[CHECK] Trend Filter: [PASS]")
                                     
@@ -420,17 +490,19 @@ class MidasEngine(threading.Thread):
                                 # 2. ML Confidence & Dynamic Thresholds
                                 ml_pass = True
                                 ml_val = signal.get('ml_confidence_value')
-                                ml_threshold = 70.0
+                                ml_threshold = thresholds['min_confidence']
                                 
                                 if correlation_score > 0.90:
-                                    ml_threshold = 60.0
-                                    print(f"[ADJUSTMENT] High Sync detected! Lowering ML threshold to 60%.")
+                                    ml_threshold -= 4.0
+                                    if ml_threshold < 50.0:
+                                        ml_threshold = 50.0
+                                    print(f"[ADJUSTMENT] High Sync detected! Lowering ML threshold to {ml_threshold}%.")
 
                                 if ml_val is not None:
                                     if ml_val >= ml_threshold:
-                                        print(f"[CHECK] ML Confidence: [PASS] ({ml_val:.2f}%)")
+                                        print(f"[CHECK] ML Confidence: [PASS] ({ml_val:.2f}% >= {ml_threshold}%)")
                                     else:
-                                        print(f"[CHECK] ML Confidence: [FAIL] ({ml_val:.2f}%)")
+                                        print(f"[CHECK] ML Confidence: [FAIL] ({ml_val:.2f}% < {ml_threshold}%)")
                                         ml_pass = False
                                 else:
                                     print(f"[CHECK] ML Confidence: [FAIL] (No ML score provided by strategy)")
@@ -450,16 +522,21 @@ class MidasEngine(threading.Thread):
                                 else:
                                     print(f"[CHECK] RL Supervisor: [PASS] (N/A - No Model)")
 
-                                # 4. No Shorting Firewall
-                                no_short_pass = True
-                                if signal['type'] == 'SELL_SIGNAL':
-                                    no_short_pass = False
-                                    print(f"[CHECK] No Shorting Firewall: [FAIL] (Reason: Long-Only Mode)")
+                                # 4. Live Position Hard Guard (Signal Pre-check)
+                                current_pos = getattr(state.state_manager, 'live_nt_positions', {}).get(symbol, 0)
+                                pos_guard_pass = True
+                                
+                                if signal['type'] == 'BUY_SIGNAL' and current_pos > 0:
+                                    pos_guard_pass = False
+                                    print(f"[CHECK] Hard Guard: [FAIL] (Already Long)")
+                                elif signal['type'] == 'SELL_SIGNAL' and current_pos < 0:
+                                    pos_guard_pass = False
+                                    print(f"[CHECK] Hard Guard: [FAIL] (Already Short)")
                                 else:
-                                    print(f"[CHECK] No Shorting Firewall: [PASS]")
+                                    print(f"[CHECK] Hard Guard: [PASS]")
 
                                 # FINAL DECISION
-                                if not (trend_pass and vol_pass and ml_pass and rl_pass and no_short_pass):
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass):
                                     print("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
                                         continue
@@ -476,10 +553,54 @@ class MidasEngine(threading.Thread):
                                     confidence_score_str = signal.get('ml_confidence', f"{signal.get('confidence_score', 0):.2f}%" if 'confidence_score' in signal else 'N/A (DEV)')
                                     print(f"!!! NEW SIGNAL [{reason}]: {signal['type']} at {signal['price']} for {signal['size']} with {confidence_score_str} confidence!!!")
 
+                                    # --- 🚀 AUTO-TRADE AUTOPILOT ---
+                                    if state.state_manager.auto_buy_enabled and signal['type'] in ['BUY_SIGNAL', 'SELL_SIGNAL']:
+                                        current_time = time.time()
+                                        if current_time - state.state_manager.last_trade_time > 5:
+                                            if current_time - signal['timestamp'] <= 2:
+                                                print(f"🚀 AUTO-TRADE TRIGGERED: {signal['type']}")
+                                                
+                                                exec_price = signal.get('price', price)
+                                                dynamic_size = logic.calculate_position_size(exec_price, state.state_manager.price_history)
+                                                
+                                                trade_executed = False
+                                                pos_type = 'BUY'
+                                                
+                                                if signal['type'] == 'BUY_SIGNAL':
+                                                    if current_pos < 0:
+                                                        print(f"--- REVERSAL: Flattening Short {abs(current_pos)} before Auto-Buy ---")
+                                                        self.adapter.execute_buy(symbol, abs(current_pos), exec_price, signal_id='REVERSAL')
+                                                        time.sleep(0.5)
+                                                    trade_executed = self.adapter.execute_buy(symbol, dynamic_size, exec_price, signal_id=str(signal['timestamp']))
+                                                else:
+                                                    if current_pos > 0:
+                                                        print(f"--- REVERSAL: Flattening Long {current_pos} before Auto-Sell ---")
+                                                        self.adapter.execute_sell(symbol, current_pos, exec_price, signal_id='REVERSAL')
+                                                        time.sleep(0.5)
+                                                    trade_executed = self.adapter.execute_sell(symbol, dynamic_size, exec_price, signal_id=str(signal['timestamp']))
+                                                    pos_type = 'SELL'
+                                                
+                                                if trade_executed:
+                                                    logger.update_user_decision(str(signal['timestamp']), 'APPROVED')
+                                                    state.state_manager.set_signal_approved()
+                                                    
+                                                    position = {
+                                                        'symbol': symbol,
+                                                        'entry_price': exec_price,
+                                                        'size': dynamic_size,
+                                                        'type': pos_type,
+                                                        'timestamp': time.time(),
+                                                        'signal_timestamp': float(signal['timestamp'])
+                                                    }
+                                                    state.state_manager.add_position(position)
+                                                    state.state_manager.last_trade_time = current_time
+                                                    state.state_manager.remove_pending_signal(signal)
+                                                    print(f"✅ AUTO-TRADE EXECUTED: {symbol} at {exec_price} ({pos_type})")
+
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
             
-            time.sleep(1)
+            time.sleep(0.5) #0.5 or 1. remember this
         
         print("MidasEngine stopped.")
 

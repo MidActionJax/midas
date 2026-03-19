@@ -53,7 +53,7 @@
                 <div class="card text-white bg-dark border-secondary h-100">
                     <div class="card-body">
                         <h5 class="card-title text-warning">Market Session</h5>
-                        <p id="hud-session" class="card-text fs-3">--</p>
+                        <p class="card-text fs-3"><span id="session-phase-badge" class="badge bg-secondary">--</span></p>
                     </div>
                 </div>
             </div>
@@ -77,6 +77,11 @@
             <div class="form-check form-switch fs-4">
                 <input class="form-check-input" type="checkbox" role="switch" id="dev-mode-switch">
                 <label class="form-check-label text-light" for="dev-mode-switch" id="dev-mode-label">DEV</label>
+            </div>
+            <!-- AUTO-BUY Switch -->
+            <div class="form-check form-switch fs-4">
+                <input class="form-check-input" type="checkbox" role="switch" id="auto-buy-switch">
+                <label class="form-check-label text-light fw-bold" for="auto-buy-switch" id="auto-buy-label">🚀 AUTO-TRADE MODE</label>
             </div>
             <button id="enable-audio" class="btn btn-outline-warning">🔈 Enable Audio</button>
             <a id="start-button" href="/start_bot" class="btn btn-success">Start Engine</a>
@@ -322,7 +327,6 @@
                     // New HUD Elements
                     const hudBalance = document.getElementById('hud-balance');
                     const hudPnl = document.getElementById('hud-pnl');
-                    const hudSession = document.getElementById('hud-session');
                     // New Log & Switch
                     const masterSwitch = document.getElementById('master-switch');
                     const masterSwitchLabel = document.getElementById('master-switch-label');
@@ -332,6 +336,8 @@
                     const squawkFeed = document.getElementById('squawk-feed');
                     const devModeSwitch = document.getElementById('dev-mode-switch');
                     const devModeLabel = document.getElementById('dev-mode-label');
+                    const autoBuySwitch = document.getElementById('auto-buy-switch');
+                    const autoBuyLabel = document.getElementById('auto-buy-label');
                     const chopIndexEl = document.getElementById('chop-index');
 
 
@@ -425,7 +431,22 @@
                     else if (dailyPnl < 0) hudPnl.className = 'card-text fs-3 text-danger';
                     else hudPnl.className = 'card-text fs-3 text-light';
 
-                    hudSession.textContent = data.market_session;
+                    const sessionBadge = document.getElementById('session-phase-badge');
+                    if (sessionBadge) {
+                        sessionBadge.textContent = data.market_session;
+                        sessionBadge.className = 'badge'; // Reset classes
+                        if (data.market_session === 'Lunch Chop' || data.market_session === 'Market Halt') {
+                            sessionBadge.classList.add('bg-danger');
+                        } else if (data.market_session === 'Power Hour' || data.market_session === 'The Open' || data.market_session === 'Trend Est.') {
+                            sessionBadge.classList.add('bg-success');
+                        } else if (data.market_session === 'The Reset' || data.market_session === 'Pre-Market') {
+                            sessionBadge.classList.add('bg-warning', 'text-dark');
+                        } else if (data.market_session === 'Overnight') {
+                            sessionBadge.classList.add('bg-primary');
+                        } else {
+                            sessionBadge.classList.add('bg-secondary');
+                        }
+                    }
                     
                     const realizedPnl = parseFloat(data.realized_pnl);
                     pnlEl.textContent = formatCurrency(realizedPnl);
@@ -526,6 +547,18 @@
                         devModeLabel.classList.add('text-info');
                     } else {
                         devModeLabel.classList.remove('text-info');
+                    }
+
+                    // AUTO-BUY Mode Switch
+                    autoBuySwitch.checked = data.auto_buy_enabled;
+                    if (data.auto_buy_enabled) {
+                        autoBuyLabel.classList.remove('text-light');
+                        autoBuyLabel.style.color = '#FFD700'; // Midas Gold
+                        autoBuyLabel.style.textShadow = '0 0 10px #FFD700';
+                    } else {
+                        autoBuyLabel.classList.add('text-light');
+                        autoBuyLabel.style.color = ''; 
+                        autoBuyLabel.style.textShadow = '';
                     }
 
                     // Performance Scorecard
@@ -716,6 +749,21 @@
                 }
             })
             .catch(error => console.error("Error switching dev mode:", error));
+        });
+
+        // AUTO-BUY Mode Switcher Listener
+        document.getElementById('auto-buy-switch').addEventListener('change', function(e) {
+            fetch('/toggle_auto_buy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateStatus(); 
+                }
+            })
+            .catch(error => console.error("Error switching auto-buy mode:", error));
         });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
