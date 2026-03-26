@@ -20,6 +20,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double lastPnl = double.MinValue;
         private Account account;
         private int AccountPort = 36970;
+        private string lastChartTime = DateTime.Now.ToString("o");
+        private DateTime lastDepthUpdate = DateTime.MinValue;
 
 
         protected override void OnStateChange()
@@ -39,9 +41,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 foreach(Account a in Cbi.Account.All) { Print("AVAILABLE ACCOUNT: " + a.Name); }
                 // -------------------
 
-                Print("SEARCHING FOR: DEMO5611174");
-                // Find the specific Demo account from your screenshot
-                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174");
+                Print("SEARCHING FOR: DEMO5611174 or Playback101");
+                // Find the specific Demo account or Playback account
+                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174" || a.Name == "Playback101");
 
                 if (account != null) 
                 {
@@ -51,7 +53,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 if (account == null)
                 {
-                    Print("MidasBridge ERROR: Could not find account DEMO5611174!");
+                    Print("MidasBridge ERROR: Could not find account DEMO5611174 or Playback101!");
                 }
             }
             else if (State == State.DataLoaded)
@@ -79,7 +81,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             
             // 1. Check Account
             if (account == null) {
-                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174");
+                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174" || a.Name == "Playback101");
                 Print("1. Searching for Account... " + (account != null ? "FOUND" : "NOT FOUND"));
             }
             
@@ -104,6 +106,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         // 3. Check JSON Construction
                         string json = "{" +
                             "\"LABEL\":\"ACCOUNT_UPDATE\"," +
+                            "\"chart_time\":\"" + lastChartTime + "\"," +
                             "\"ACCOUNT_VALUE\":" + balance + "," +
                             "\"DAILY_PNL\":" + currentPnl + "," +
                             "\"CASH_VALUE\":" + account.Get(AccountItem.CashValue, Currency.UsDollar) + "," +
@@ -158,7 +161,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (request.Contains("GET_PRICE"))
                         {
                             string priceString = GetCurrentAsk().ToString();
-                            byte[] response = Encoding.UTF8.GetBytes(priceString);
+                            string[] reqParts = request.Split('|');
+                            string reqSymbol = reqParts.Length > 1 ? reqParts[1] : Instrument.MasterInstrument.Name;
+                            string responseStr = $"HEARTBEAT|{reqSymbol}|{priceString}|{lastChartTime}";
+                            byte[] response = Encoding.UTF8.GetBytes(responseStr);
                             stream.Write(response, 0, response.Length);
                         }
                         else if (request.Contains("PLACE_ORDER"))
@@ -202,6 +208,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string side = e.Execution.Order.OrderAction == OrderAction.Buy ? "BUY" : "SELL";
                 string json = "{" +
                     "\"LABEL\":\"ORDER_FILL\"," +
+                    "\"chart_time\":\"" + e.Execution.Time.ToString("o") + "\"," +
                     "\"SYMBOL\":\"" + e.Execution.Instrument.MasterInstrument.Name + "\"," +
                     "\"QUANTITY\":" + e.Execution.Quantity + "," +
                     "\"PRICE\":" + e.Execution.Price + "," +
@@ -218,13 +225,21 @@ namespace NinjaTrader.NinjaScript.Indicators
             // We only care about Last trades (the Tape)
             if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Last)
             {
+                if ((DateTime.Now - lastDepthUpdate).TotalMilliseconds < 250)
+                    return;
+
+                lastDepthUpdate = DateTime.Now;
+
                 try
                 {
+                    lastChartTime = marketDataUpdate.Time.ToString("o");
+                    
                     // Simple side detection logic
                     string side = marketDataUpdate.Price >= GetCurrentAsk() ? "BUY" : "SELL";
                     
                     string json = "{" +
                         "\"LABEL\":\"TRADE\"," +
+                        "\"chart_time\":\"" + lastChartTime + "\"," +
                         "\"SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
                         "\"SIZE\":" + marketDataUpdate.Volume + "," +
                         "\"PRICE\":" + marketDataUpdate.Price + "," +
@@ -240,7 +255,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        protected override void OnBarUpdate() { }
+        protected override void OnBarUpdate() 
+        {
+            if (CurrentBar >= 0)
+                lastChartTime = Time[0].ToString("o");
+        }
 
         // This is the magic block that adds the setting in the NT8 UI!
         [NinjaScriptProperty]

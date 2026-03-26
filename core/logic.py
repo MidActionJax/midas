@@ -22,9 +22,9 @@ brain = MidasBrain()
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'midas_truth_engine.joblib')
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'midas_brain.pkl')
 TRUTH_ENGINE = None
-MIN_CONFIDENCE_THRESHOLD = 60
+MIN_CONFIDENCE_THRESHOLD = 95.0
 
 if os.path.exists(MODEL_PATH):
     try:
@@ -130,12 +130,21 @@ def get_market_session():
     Determines the current market session based on EST.
     """
     try:
-        est = ZoneInfo('US/Eastern')
-        now_est = datetime.now(est).time()
+        from datetime import datetime, timezone, timedelta, time as datetime_time
+        from zoneinfo import ZoneInfo
+        
+        if state_manager.current_market_time:
+            # Assume naive Arizona time (MST) and shift to EST
+            now_est = (state_manager.current_market_time + timedelta(hours=3)).time()
+        else:
+            # Fallback to current UTC and convert to EST
+            utc_now = datetime.now(timezone.utc)
+            est_now = utc_now.astimezone(ZoneInfo('US/Eastern'))
+            now_est = est_now.time()
 
         open_end = datetime_time(10, 30)
-        trend_est_end = datetime_time(11, 30)
-        lunch_chop_end = datetime_time(13, 30)
+        trend_est_end = datetime_time(12, 0)
+        lunch_chop_end = datetime_time(14, 0)
         reset_end = datetime_time(15, 0)
         power_hour_end = datetime_time(16, 0)
         halt_end = datetime_time(18, 0)
@@ -170,14 +179,21 @@ def get_dynamic_thresholds():
     Maps PST timeblocks to EST.
     """
     try:
+        from datetime import datetime, timezone, timedelta, time as datetime_time
         est = ZoneInfo('US/Eastern')
-        now_est = datetime.now(est).time()
+        
+        if state_manager.current_market_time:
+            # Assume naive Arizona time (MST) and shift to EST
+            now_est = (state_manager.current_market_time + timedelta(hours=3)).time()
+        else:
+            utc_now = datetime.now(timezone.utc)
+            now_est = datetime.now(est).time()
 
-        open_end = datetime_time(10, 30)        # 6:30 - 7:30 PST -> 9:30 - 10:30 EST
-        trend_est_end = datetime_time(11, 30)   # 7:30 - 8:30 PST -> 10:30 - 11:30 EST
-        lunch_chop_end = datetime_time(13, 30)  # 8:30 - 10:30 PST -> 11:30 - 13:30 EST
-        reset_end = datetime_time(15, 0)        # 10:30 - 12:00 PST -> 13:30 - 15:00 EST
-        power_hour_end = datetime_time(16, 0)   # 12:00 - 1:00 PST -> 15:00 - 16:00 EST
+        open_end = datetime_time(10, 30)
+        trend_est_end = datetime_time(12, 0)
+        lunch_chop_end = datetime_time(14, 0)
+        reset_end = datetime_time(15, 0)
+        power_hour_end = datetime_time(16, 0)
         
         # MARKET HALT: 16:00 to 18:00 EST (1:00 PM - 3:00 PM MST)
         halt_end = datetime_time(18, 0)
@@ -190,17 +206,17 @@ def get_dynamic_thresholds():
             return {'min_confidence': 60.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
 
         if now_est < datetime_time(9, 30):
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.0, 'strategy': 'ALL'}  # Pre-market
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
         elif now_est < open_end:
-            return {'min_confidence': 54.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}  # The Open
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'} #change back to 95
         elif now_est < trend_est_end:
-            return {'min_confidence': 55.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # Trend Est.
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
         elif now_est < lunch_chop_end:
-            return {'min_confidence': 65.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # Lunch Chop
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'} #change back to 95
         elif now_est < reset_end:
-            return {'min_confidence': 55.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # The Reset
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
         elif now_est < power_hour_end:
-            return {'min_confidence': 54.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}  # Power Hour
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
         else:
             return {'min_confidence': 85.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}  # After hours
     except Exception as e:
@@ -357,21 +373,22 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 signal = {'symbol': symbol, 'type': 'SELL_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
                 break
     
-    if not signal or symbol != 'MES':
+    if symbol != 'MES':
         return None
 
     # --- DEV MODE OVERRIDE ---
     if state_manager.dev_mode:
-        # We bypass the complex ML and trend filters, but DO NOT auto-execute.
-        # We tag it as a DEV signal and return it so it hits the Approval Queue.
-        signal['confidence_score'] = 99.99 # Fake high confidence for UI
-        signal['reason'] = 'DEV Override'
-        print("--- DEV MODE: Signal bypasses filters -> Sent to Approval Queue ---")
+        if signal:
+            # We bypass the complex ML and trend filters, but DO NOT auto-execute.
+            # We tag it as a DEV signal and return it so it hits the Approval Queue.
+            signal['confidence_score'] = 99.99 # Fake high confidence for UI
+            signal['reason'] = 'DEV Override'
+            print("--- DEV MODE: Signal bypasses filters -> Sent to Approval Queue ---")
 
-        # SURGICAL FIX: Log the DEV signal so the CSV knows it exists
-        dummy_context = {'ema_val': 0, 'trend': 'DEV', 'atr': 0, 'session': 'DEV', 'whale_strength': 0}
-        log_signal(signal, dummy_context, 'PENDING')
-        return signal
+            # SURGICAL FIX: Log the DEV signal so the CSV knows it exists
+            dummy_context = {'ema_val': 0, 'trend': 'DEV', 'atr': 0, 'session': 'DEV', 'whale_strength': 0}
+            log_signal(signal, dummy_context, 'PENDING')
+            return signal
 
     # 2. Get Market Context
     price_history_mes = price_history_map.get('MES', [])
@@ -386,37 +403,54 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         return None
 
     trend_mes = "BULLISH" if current_price_mes > ema_mes else "BEARISH"
-    signal['trend'] = trend_mes
     
-    signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
     market_trend = trend_mes
-    
-    if signal_direction == 'BUY' and market_trend == 'BULLISH':
-        signal['trend_pass'] = True
-    elif signal_direction == 'SELL' and market_trend == 'BEARISH':
-        signal['trend_pass'] = True
-    else:
-        signal['trend_pass'] = False
     
     # --- THE 4TH KEY: Volatility Gate ---
     atr_mes = get_current_atr(price_history_mes)
-    signal['atr'] = atr_mes
     thresholds = get_dynamic_thresholds()
     min_atr = thresholds.get('min_atr', 2.0) if isinstance(thresholds, dict) else 2.0
-    signal['volatility_pass'] = is_volatility_safe(atr_mes, min_atr)
-        
-    # --- THE TRUTH ENGINE: ML Veto ---
+    
+    ml_score_pct = 0.0
+    trend_alignment = 0.0
+
+    # --- THE TRUTH ENGINE: ML Veto (MIDAS BRAIN UPGRADE) ---
     if TRUTH_ENGINE:
-        # Gather features for the model
-        atr_mnq = get_current_atr(price_history_mnq)
-        in_sync = (current_price_mes > ema_mes) == (price_history_mnq[-1] > calculate_ema(price_history_mnq, period=5))
+        # 1. EXTRACT THE RAW ORDER BOOK DATA
+        bids = order_book.get('bids', [])
+        asks = order_book.get('asks', [])
         
+        # If the book is empty, we default to 0 to prevent crashes
+        best_bid = bids[0][0] if bids else 0
+        best_ask = asks[0][0] if asks else 0
+        bid_vol = sum(size for price, size in bids)
+        ask_vol = sum(size for price, size in asks)
+        mid_price = (best_bid + best_ask) / 2 if best_bid and best_ask else current_price_mes
+        
+        est = ZoneInfo('US/Eastern')
+        if state_manager.current_market_time:
+            current_hour = state_manager.current_market_time.hour
+        else:
+            current_hour = datetime.now(est).hour
+
+        # 2. CALCULATE THE ON-THE-FLY MEMORY MATRIX
+        # Ensure we have at least 60 seconds of history, otherwise default to 0
+        sma_30 = sum(price_history_mes[-30:]) / 30 if len(price_history_mes) >= 30 else current_price_mes
+        sma_60 = sum(price_history_mes[-60:]) / 60 if len(price_history_mes) >= 60 else current_price_mes
+        trend_alignment = sma_30 - sma_60
+        volatility_60s = statistics.stdev(price_history_mes[-60:]) if len(price_history_mes) >= 60 else 0.0
+
+        # 3. CREATE THE FLASHCARD FOR THE BRAIN
+        # These 8 features MUST perfectly match what we trained the Midas Brain on
         features = pd.DataFrame([{
-            'atr_mes': atr_mes,
-            'atr_mnq': atr_mnq,
-            'above_ema': int(current_price_mes > ema_mes),
-            'in_sync': int(in_sync),
-            'hour': datetime.now().hour
+            'Bid_Vol': bid_vol,
+            'Best_Bid': best_bid,
+            'Ask_Vol': ask_vol,
+            'Best_Ask': best_ask,
+            'Mid_Price': mid_price,
+            'Hour': current_hour,
+            'Trend_Alignment': trend_alignment,
+            'Volatility_60s': volatility_60s
         }])
         
         # Prediction
@@ -425,6 +459,14 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         ml_score_pct = success_prob * 100
 
         # --- SENSITIVITY RECALIBRATION: Market Sync Weight ---
+        # We define in_sync as False by default so it never crashes!
+        in_sync = False
+        ema_mes_5 = calculate_ema(price_history_mes, period=5)
+        ema_mnq_5 = calculate_ema(price_history_mnq, period=5)
+        
+        if ema_mes_5 and ema_mnq_5:
+             in_sync = (current_price_mes > ema_mes_5) == (price_history_mnq[-1] > ema_mnq_5)
+             
         if in_sync:
             ml_score_pct += 25.0 # Boost base confidence if markets align
 
@@ -437,7 +479,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 whale_pattern = next((w for w in reversed(all_whales) if w.get('whale_id') == whale_id), None)
                 if whale_pattern:
                     whale_side = whale_pattern.get('side')
-                    signal_side = 'BUY' if signal['type'] == 'BUY_SIGNAL' else 'SELL'
+                    signal_side = 'BUY' if not signal or signal['type'] == 'BUY_SIGNAL' else 'SELL'
                     
                     if whale_side == signal_side:
                         print(f"--- 5TH KEY: Sync with Dominant Whale {whale_id} detected! Boosting confidence. ---")
@@ -445,17 +487,62 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                         signal['whale_id'] = whale_id # Tag signal for logging
                         break # Apply boost only once
 
-        ml_score_pct = min(ml_score_pct, 100.0) # Ensure it never exceeds 100%
-        signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
-        signal['ml_confidence_value'] = ml_score_pct
+        ml_score_pct = min(ml_score_pct, 100.0)
+
+        # --- AI SNIPER TRIGGER ---
+        # If the AI is confident, it creates its own signal even if no iceberg exists!
+        if ml_score_pct >= MIN_CONFIDENCE_THRESHOLD:
+            if signal is None:
+                signal = {
+                    'symbol': symbol,
+                    'type': 'BUY_SIGNAL', # Brain is trained for upward jumps
+                    'price': best_ask,
+                    'size': 1.0,
+                    'timestamp': round(time.time(), 4)
+                }
+            
+            signal['reason'] = 'Midas Brain Sniper'
+            signal['trend_pass'] = True
+            signal['volatility_pass'] = True
+            # 🛑 SURGICAL FIX: Spoof the ATR so engine.py can't veto it
+            signal['atr'] = 99.0
+
+        if signal:
+            signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
+            signal['ml_confidence_value'] = ml_score_pct
+
+    print(f"[X-RAY] ATR: {atr_mes:.2f} | ML Confidence: {ml_score_pct:.2f}% | Trend: {trend_alignment:.2f}")
+
+    # If neither the Iceberg nor the AI found a reason to trade, quit.
+    if not signal:
+        return None
+
+    if 'trend' not in signal:
+        signal['trend'] = trend_mes
+        
+    if 'trend_pass' not in signal:
+        signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
+        if signal_direction == 'BUY' and market_trend == 'BULLISH':
+            signal['trend_pass'] = True
+        elif signal_direction == 'SELL' and market_trend == 'BEARISH':
+            signal['trend_pass'] = True
+        else:
+            signal['trend_pass'] = False
+            
+    if 'atr' not in signal:
+        signal['atr'] = atr_mes
+        
+    if 'volatility_pass' not in signal:
+        signal['volatility_pass'] = is_volatility_safe(atr_mes, min_atr)
 
     session_str = get_market_session()
     raw_whale_strength = calculate_whale_strength(signal['size'], order_book)
     
+    # Use the AI's higher-quality math for the dashboard/logs
     signal['context_data'] = {
-        'ema_val': ema_mes,
+        'ema_val': sma_60 if 'sma_60' in locals() else ema_mes,
         'trend': trend_mes,
-        'atr': atr_mes,
+        'atr': volatility_60s if 'volatility_60s' in locals() else atr_mes,
         'session': session_str,
         'whale_strength': raw_whale_strength
     }

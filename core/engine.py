@@ -55,7 +55,7 @@ class MidasEngine(threading.Thread):
             brain.model = brain._load_model()
             
         import joblib
-        truth_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'midas_truth_engine.joblib')
+        truth_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'midas_brain.pkl')
         if os.path.exists(truth_model_path):
             try:
                 new_truth = joblib.load(truth_model_path)
@@ -154,7 +154,7 @@ class MidasEngine(threading.Thread):
                         pos['unrealized_pnl'] = points_profit * multiplier * pos.get('size', 1)
                         
                         if 'dynamic_sl' not in pos:
-                            pos['dynamic_sl'] = -4.0 # Default SL to 4 points as a safety net
+                            pos['dynamic_sl'] = -1.0 # STRICT -1.0 POINT STOP LOSS
                             
                         # --- TASK 2: INSTANT AUTO-BREAKEVEN & TIGHT TRAIL ---
                         if points_profit >= 1.0:
@@ -163,7 +163,7 @@ class MidasEngine(threading.Thread):
                                 pos['dynamic_sl'] = new_sl
                                 print(f"--- AUTO-BREAKEVEN / TRAIL: {pos_symbol} SL moved to +{new_sl:.2f} points ---")
                                  
-                        hit_tp = points_profit >= 4.0 # Hard 4 points TP
+                        hit_tp = points_profit >= 3.0 # STRICT +3.0 POINT PROFIT TARGET
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
@@ -384,36 +384,10 @@ class MidasEngine(threading.Thread):
 
                             if thresholds['halt']:
                                 pass
-                            elif thresholds['strategy'] == 'MEAN_REVERSION':
-                                print(f"--- REGIME: OVERNIGHT -> Activating Mean Reversion Strategy ---")
-                                signal = logic.analyze_mean_reversion(
-                                    symbol,
-                                    market_depth,
-                                    state.state_manager.price_history.get(symbol, []),
-                                    100.0  # Force it to pass chop index check
-                                )
-                            elif chop_index > 61.8:
-                                # Ranging Market -> Mean Reversion
-                                print(f"--- REGIME: RANGING ({chop_index:.2f}) -> Activating Mean Reversion Strategy ---")
-                                signal = logic.analyze_mean_reversion(
-                                    symbol,
-                                    market_depth,
-                                    state.state_manager.price_history.get(symbol, []),
-                                    chop_index
-                                )
-                            elif chop_index < 38.2:
-                                # Trending Market -> Breakout
-                                print(f"--- REGIME: TRENDING ({chop_index:.2f}) -> Activating Breakout Strategy ---")
-                                signal = logic.analyze_breakout(
-                                    symbol,
-                                    market_depth,
-                                    state.state_manager.price_history.get(symbol, []),
-                                    chop_index
-                                )
-                            else:  # 38.2 <= chop_index <= 61.8
-                                # Standard/Choppy Market -> Iceberg
+                            else:
+                                # TEMPORARY SURGICAL FIX: Force ML-Enabled Iceberg Strategy exclusively.
                                 session_name = logic.get_market_session()
-                                print(f"--- ACTIVE PROFILE: {session_name} ---")
+                                print(f"--- ACTIVE PROFILE: {session_name} (CHOP INDEX BYPASSED, FORCING ML) ---")
                                 signal = logic.analyze_order_book(
                                     symbol, market_depth, state.state_manager.price_history, self.adapter
                                 )
@@ -492,12 +466,6 @@ class MidasEngine(threading.Thread):
                                 ml_val = signal.get('ml_confidence_value')
                                 ml_threshold = thresholds['min_confidence']
                                 
-                                if correlation_score > 0.90:
-                                    ml_threshold -= 4.0
-                                    if ml_threshold < 50.0:
-                                        ml_threshold = 50.0
-                                    print(f"[ADJUSTMENT] High Sync detected! Lowering ML threshold to {ml_threshold}%.")
-
                                 if ml_val is not None:
                                     if ml_val >= ml_threshold:
                                         print(f"[CHECK] ML Confidence: [PASS] ({ml_val:.2f}% >= {ml_threshold}%)")
@@ -556,6 +524,9 @@ class MidasEngine(threading.Thread):
                                     # --- 🚀 AUTO-TRADE AUTOPILOT ---
                                     if state.state_manager.auto_buy_enabled and signal['type'] in ['BUY_SIGNAL', 'SELL_SIGNAL']:
                                         current_time = time.time()
+                                        # 🛑 SURGICAL FIX: Anti-Machine Gun Lock
+                                        if abs(current_pos) > 0 or len(state.state_manager.get_active_positions()) > 0:
+                                            continue
                                         if current_time - state.state_manager.last_trade_time > 5:
                                             if current_time - signal['timestamp'] <= 2:
                                                 print(f"🚀 AUTO-TRADE TRIGGERED: {signal['type']}")
