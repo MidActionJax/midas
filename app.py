@@ -196,7 +196,7 @@ def status():
         pnl_labels = ['Start', 'Live']
         pnl_history = [0.0, float(state.state_manager.daily_pnl)]
         
-    print(f"DEBUG: Sending {len(pnl_history)} points to Chart.")
+    #print(f"DEBUG: Sending {len(pnl_history)} points to Chart.")
 
     status_data = {
         'active': False,

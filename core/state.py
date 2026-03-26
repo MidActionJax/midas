@@ -2,6 +2,7 @@ import threading
 import json
 import os
 import time
+import pandas as pd
 
 class StateManager:
     """
@@ -39,6 +40,7 @@ class StateManager:
         self.current_chop_index = 50.0
         self.MAX_DAILY_LOSS = -250.00
         self.circuit_breaker_tripped = False
+        self.current_market_time = None
         self.state_file = state_file
         self.load_price_history()
 
@@ -97,6 +99,19 @@ class StateManager:
             self.account_balance = balance
             self.daily_pnl = pnl
             self.last_sync_time = sync_time
+            
+    def update_market_time(self, time_string):
+        """Parses the incoming NT8 time string into a timezone-aware datetime object (US/Eastern)."""
+        with self._lock:
+            try:
+                dt = pd.to_datetime(time_string)
+                if dt.tzinfo is None:
+                    dt = dt.tz_localize('US/Eastern')
+                else:
+                    dt = dt.tz_convert('US/Eastern')
+                self.current_market_time = dt.to_pydatetime()
+            except Exception as e:
+                print(f"Error parsing market time {time_string}: {e}")
 
     def set_market_data(self, symbol, data):
         with self._lock:

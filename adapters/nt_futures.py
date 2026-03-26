@@ -78,6 +78,11 @@ class NTFuturesAdapter:
                         data = conn.recv(1024).decode('utf-8')
                         if data:
                             message = json.loads(data)
+
+                            chart_time = message.get('chart_time') or message.get('CHART_TIME')
+                            if chart_time:
+                                state_manager.update_market_time(chart_time)
+
                             label = message.get('LABEL')
 
                             # --- EXISTING ACCOUNT LOGIC ---
@@ -174,6 +179,8 @@ class NTFuturesAdapter:
                                 print(f"❌ SOCKET FIREWALL: Expected {symbol} but got {recv_symbol}")
                                 return self.last_price.get(symbol)
                             price = float(parts[2])
+                            if len(parts) >= 4:
+                                state_manager.update_market_time(parts[3])
                         else:
                             price = float(parts[-1])
                     else:
