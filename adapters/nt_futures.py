@@ -328,12 +328,13 @@ class NTFuturesAdapter:
         print(f"--- Attempting to BUY {size} of {symbol} at market (Signal: {signal_id}) ---")
         return self._send_order_to_nt('BUY', symbol, size)
 
-    def execute_sell(self, symbol, size, price, signal_id=None):
+    def execute_sell(self, symbol, size, price, signal_id=None, side='SELL'):
         """
-        Executes a SELL order via NT8.
+        Executes a SELL or SELL SHORT order via NT8.
         """
-        print(f"--- Attempting to SELL {size} of {symbol} at market (Signal: {signal_id}) ---")
-        return self._send_order_to_nt('SELL', symbol, size)
+        action = side.upper()
+        print(f"--- Attempting to {action} {size} of {symbol} at market (Signal: {signal_id}) ---")
+        return self._send_order_to_nt(action, symbol, size)
     
     def get_open_positions(self):
         """

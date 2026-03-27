@@ -4,9 +4,9 @@ import time
 
 # --- 1. SET YOUR FILE NAME HERE ---
 # Make sure this matches your 398MB file exactly
-file_name = "scripts/MES_Level2_Dump_20260319_103521.csv" 
+file_name = "12_MES_Level2_Dump_20260323_100244.csv" 
 
-print("⏳ Loading 398MB of raw Level 2 data... (This might take a minute or two)")
+print("⏳ Loading raw Level 2 data... (This might take a minute or two)")
 # Load the CSV. We tell pandas what the columns are just to be safe.
 df = pd.read_csv(file_name)
 
@@ -66,5 +66,5 @@ print("======================================================\n")
 
 print("💾 Saving the AI-ready dataset...")
 # Save the new, much smaller, highly targeted dataset
-book.to_csv("ML_Ready_Data_Jan1_Jan2.csv")
+book.to_csv("ML_Ready_Data_Week12.csv")
 print("✅ Done! We are ready to build the brain.")

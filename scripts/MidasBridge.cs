@@ -179,7 +179,21 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                                 if (account != null && symbol == Instrument.MasterInstrument.Name)
                                 {
-                                    OrderAction action = side == "BUY" ? OrderAction.Buy : OrderAction.Sell;
+                                    // --- SURGICAL UPDATE: Handle SHORT action from Python Engine ---
+                                    OrderAction action;
+                                    if (side == "BUY")
+                                    {
+                                        action = OrderAction.Buy;
+                                    }
+                                    else if (side == "SHORT")
+                                    {
+                                        action = OrderAction.SellShort;
+                                        Print("Midas: Executing SHORT order.");
+                                    }
+                                    else // Default to Sell for liquidating longs
+                                    {
+                                        action = OrderAction.Sell;
+                                    }
                                     System.Windows.Application.Current.Dispatcher.Invoke(() =>
                                     {
                                        Order myOrder = account.CreateOrder(Instrument, action, OrderType.Market, TimeInForce.Day, quantity, 0, 0, string.Empty, "MidasOrder", null);
