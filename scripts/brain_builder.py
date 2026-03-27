@@ -6,7 +6,7 @@ import joblib
 
 print("🔍 Hunting for all ML_Ready files...")
 # This finds every single CSV file in the folder that starts with "ML_Ready"
-file_list = glob.glob("data/lvl_2_clean/ML_Ready*.csv")
+file_list = glob.glob("data/lvl_2_clean/long/ML_Ready*.csv")
 print(f"✅ Found {len(file_list)} files. Stitching them together...")
 
 # Zip all 12 files into one giant Master Dataset

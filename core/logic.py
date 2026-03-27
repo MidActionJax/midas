@@ -22,18 +22,37 @@ brain = MidasBrain()
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'midas_brain.pkl')
-TRUTH_ENGINE = None
-MIN_CONFIDENCE_THRESHOLD = 95.0
+MODEL_PATH_LONG = os.path.join(BASE_DIR, 'models', 'midas_brain.pkl')
+MODEL_PATH_SHORT = os.path.join(BASE_DIR, 'models', 'midas_brain_short.pkl')
+TRUTH_ENGINE_LONG = None
+TRUTH_ENGINE_SHORT = None
+MIN_CONFIDENCE_THRESHOLD = 85.0
 
-if os.path.exists(MODEL_PATH):
+class DualCoreMemory:
+    def __init__(self):
+        self.bid_vol_hist = deque(maxlen=6)
+        self.ask_vol_hist = deque(maxlen=6)
+        self.imbalance_hist = deque(maxlen=30)
+
+dc_memory = DualCoreMemory()
+
+if os.path.exists(MODEL_PATH_LONG):
     try:
-        TRUTH_ENGINE = joblib.load(MODEL_PATH)
-        print(f"INFO: Truth Engine loaded successfully from {MODEL_PATH}")
+        TRUTH_ENGINE_LONG = joblib.load(MODEL_PATH_LONG)
+        print(f"INFO: Dual-Core Engine: LONG Brain loaded successfully from {MODEL_PATH_LONG}")
     except Exception as e:
-        print(f"ERROR: Could not load Truth Engine: {e}")
+        print(f"ERROR: Could not load LONG Brain: {e}")
 else:
-    print(f"WARNING: No model file found at {MODEL_PATH}. Check your folder structure.")
+    print(f"WARNING: No LONG model file found at {MODEL_PATH_LONG}. Check your folder structure.")
+
+if os.path.exists(MODEL_PATH_SHORT):
+    try:
+        TRUTH_ENGINE_SHORT = joblib.load(MODEL_PATH_SHORT)
+        print(f"INFO: Dual-Core Engine: SHORT Brain loaded successfully from {MODEL_PATH_SHORT}")
+    except Exception as e:
+        print(f"ERROR: Could not load SHORT Brain: {e}")
+else:
+    print(f"WARNING: No SHORT model file found at {MODEL_PATH_SHORT}. Check your folder structure.")
 
 
 Trade = namedtuple('Trade', ['timestamp', 'size', 'side'])
@@ -206,17 +225,17 @@ def get_dynamic_thresholds():
             return {'min_confidence': 60.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
 
         if now_est < datetime_time(9, 30):
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est < open_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'} #change back to 95
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
         elif now_est < trend_est_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est < lunch_chop_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'} #change back to 95
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
         elif now_est < reset_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est < power_hour_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.75, 'strategy': 'ALL'}
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         else:
             return {'min_confidence': 85.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}  # After hours
     except Exception as e:
@@ -258,28 +277,31 @@ def calculate_whale_strength(iceberg_size, order_book):
     return strength
 
 
-def get_current_atr(price_history, period=14):
+def get_current_atr(price_history, period=120):
     """
-    Calculates the Average True Range (ATR) as a measure of volatility.
-    Uses a simplified True Range calculation based on price history.
+    Calculates a Micro-ATR by slicing the history into 30-second mini-bars,
+    finding the range of each block, and averaging them. 
+    This accurately filters out dead chop while catching real momentum.
     """
-    if len(price_history) < period + 1:
+    if len(price_history) < period:
         return 0.0  # Not enough data
 
-    # Simplified True Range: absolute change between close prices
-    true_ranges = [abs(price_history[i] - price_history[i-1]) for i in range(1, len(price_history))]
-    
-    if not true_ranges:
+    recent_prices = price_history[-period:]
+    block_size = 30
+    ranges = []
+
+    # Slice the data into 30-second chunks
+    for i in range(0, len(recent_prices), block_size):
+        block = recent_prices[i:i+block_size]
+        if len(block) == block_size:
+            block_range = max(block) - min(block)
+            ranges.append(block_range)
+
+    if not ranges:
         return 0.0
 
-    # ATR is the average of the true ranges over the specified period
-    atr = statistics.mean(true_ranges[-period:])
-    
-    # SANITY CHECK: Clear absurd values to reset the filter
-    if atr > 500:
-        return 0.0
-        
-    return atr
+    # Return the Average True Range of those 30-second blocks
+    return sum(ranges) / len(ranges)
 
 
 def calculate_choppiness_index(df, period=14):
@@ -413,9 +435,10 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
     
     ml_score_pct = 0.0
     trend_alignment = 0.0
+    active_brain = "NONE"
 
-    # --- THE TRUTH ENGINE: ML Veto (MIDAS BRAIN UPGRADE) ---
-    if TRUTH_ENGINE:
+    # --- THE TRUTH ENGINE: Dual-Core ML Veto (MIDAS BRAIN UPGRADE) ---
+    if TRUTH_ENGINE_LONG or TRUTH_ENGINE_SHORT:
         # 1. EXTRACT THE RAW ORDER BOOK DATA
         bids = order_book.get('bids', [])
         asks = order_book.get('asks', [])
@@ -425,6 +448,13 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         best_ask = asks[0][0] if asks else 0
         bid_vol = sum(size for price, size in bids)
         ask_vol = sum(size for price, size in asks)
+        
+        # Dual-Core Memory Tracking
+        imbalance = bid_vol - ask_vol
+        dc_memory.bid_vol_hist.append(bid_vol)
+        dc_memory.ask_vol_hist.append(ask_vol)
+        dc_memory.imbalance_hist.append(imbalance)
+
         mid_price = (best_bid + best_ask) / 2 if best_bid and best_ask else current_price_mes
         
         est = ZoneInfo('US/Eastern')
@@ -439,79 +469,121 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         sma_60 = sum(price_history_mes[-60:]) / 60 if len(price_history_mes) >= 60 else current_price_mes
         trend_alignment = sma_30 - sma_60
         volatility_60s = statistics.stdev(price_history_mes[-60:]) if len(price_history_mes) >= 60 else 0.0
-
-        # 3. CREATE THE FLASHCARD FOR THE BRAIN
-        # These 8 features MUST perfectly match what we trained the Midas Brain on
-        features = pd.DataFrame([{
-            'Bid_Vol': bid_vol,
-            'Best_Bid': best_bid,
-            'Ask_Vol': ask_vol,
-            'Best_Ask': best_ask,
-            'Mid_Price': mid_price,
-            'Hour': current_hour,
-            'Trend_Alignment': trend_alignment,
-            'Volatility_60s': volatility_60s
-        }])
         
-        # Prediction
-        probs = TRUTH_ENGINE.predict_proba(features)[0]
-        success_prob = probs[1]
-        ml_score_pct = success_prob * 100
+        # Short Specific Features
+        bid_drop_velocity = bid_vol - dc_memory.bid_vol_hist[0] if len(dc_memory.bid_vol_hist) == 6 else 0.0
+        ask_surge_velocity = ask_vol - dc_memory.ask_vol_hist[0] if len(dc_memory.ask_vol_hist) == 6 else 0.0
+        imbalance_skew_30s = sum(dc_memory.imbalance_hist) / len(dc_memory.imbalance_hist) if len(dc_memory.imbalance_hist) > 0 else 0.0
+        price_momentum_10s = price_history_mes[-1] - price_history_mes[-11] if len(price_history_mes) >= 11 else 0.0
+        distance_from_sma60 = mid_price - sma_60
 
-        # --- SENSITIVITY RECALIBRATION: Market Sync Weight ---
-        # We define in_sync as False by default so it never crashes!
-        in_sync = False
-        ema_mes_5 = calculate_ema(price_history_mes, period=5)
-        ema_mnq_5 = calculate_ema(price_history_mnq, period=5)
-        
-        if ema_mes_5 and ema_mnq_5:
-             in_sync = (current_price_mes > ema_mes_5) == (price_history_mnq[-1] > ema_mnq_5)
-             
-        if in_sync:
-            ml_score_pct += 25.0 # Boost base confidence if markets align
+        # 3. THE SPLIT-BRAIN ROUTER
+        if trend_alignment > 0 and TRUTH_ENGINE_LONG:
+            active_brain = "LONG"
+            features = pd.DataFrame([{
+                'Bid_Vol': bid_vol,
+                'Best_Bid': best_bid,
+                'Ask_Vol': ask_vol,
+                'Best_Ask': best_ask,
+                'Mid_Price': mid_price,
+                'Hour': current_hour,
+                'Trend_Alignment': trend_alignment,
+                'Volatility_60s': volatility_60s
+            }])
+            probs = TRUTH_ENGINE_LONG.predict_proba(features)[0]
+            success_prob = probs[1]
+            ml_score_pct = success_prob * 100
 
-        # --- THE 5TH KEY: Institutional Sync ---
-        dominant_whales = state_manager.get_active_dominant_whales()
-        if dominant_whales:
-            all_whales = state_manager.get_detected_whales()
-            for whale_id in dominant_whales:
-                # Find the most recent pattern for this whale_id
-                whale_pattern = next((w for w in reversed(all_whales) if w.get('whale_id') == whale_id), None)
-                if whale_pattern:
-                    whale_side = whale_pattern.get('side')
-                    signal_side = 'BUY' if not signal or signal['type'] == 'BUY_SIGNAL' else 'SELL'
-                    
-                    if whale_side == signal_side:
-                        print(f"--- 5TH KEY: Sync with Dominant Whale {whale_id} detected! Boosting confidence. ---")
-                        ml_score_pct += 30.0 # Increased weight for institutional footprint
-                        signal['whale_id'] = whale_id # Tag signal for logging
-                        break # Apply boost only once
+        elif trend_alignment <= 0 and TRUTH_ENGINE_SHORT:
+            active_brain = "SHORT"
+            features = pd.DataFrame([{
+                'Bid_Vol': bid_vol,
+                'Ask_Vol': ask_vol,
+                'Imbalance_Skew_30s': imbalance_skew_30s,
+                'Bid_Drop_Velocity': bid_drop_velocity,
+                'Ask_Surge_Velocity': ask_surge_velocity,
+                'Price_Momentum_10s': price_momentum_10s,
+                'Distance_from_SMA60': distance_from_sma60,
+                'Volatility_60s': volatility_60s
+            }])
+            probs = TRUTH_ENGINE_SHORT.predict_proba(features)[0]
+            success_prob = probs[1]
+            ml_score_pct = success_prob * 100
 
-        ml_score_pct = min(ml_score_pct, 100.0)
+        if active_brain != "NONE":
+            ema_mes_5 = calculate_ema(price_history_mes, period=5)
+            ema_mnq_5 = calculate_ema(price_history_mnq, period=5)
+            
+            in_sync = False
+            if ema_mes_5 and ema_mnq_5:
+                 in_sync = (current_price_mes > ema_mes_5) == (price_history_mnq[-1] > ema_mnq_5)
+                 
+            if in_sync:
+                ml_score_pct += 25.0 # Boost base confidence if markets align
 
-        # --- AI SNIPER TRIGGER ---
-        # If the AI is confident, it creates its own signal even if no iceberg exists!
-        if ml_score_pct >= MIN_CONFIDENCE_THRESHOLD:
-            if signal is None:
+            # --- THE 5TH KEY: Institutional Sync ---
+            dominant_whales = state_manager.get_active_dominant_whales()
+            if dominant_whales:
+                all_whales = state_manager.get_detected_whales()
+                for whale_id in dominant_whales:
+                    # Find the most recent pattern for this whale_id
+                    whale_pattern = next((w for w in reversed(all_whales) if w.get('whale_id') == whale_id), None)
+                    if whale_pattern:
+                        whale_side = whale_pattern.get('side')
+                        signal_side = 'BUY' if not signal or signal['type'] == 'BUY_SIGNAL' else 'SELL'
+                        
+                        if whale_side == signal_side:
+                            print(f"--- 5TH KEY: Sync with Dominant Whale {whale_id} detected! Boosting confidence. ---")
+                            ml_score_pct += 30.0 # Increased weight for institutional footprint
+                            if signal is not None:
+                                signal['whale_id'] = whale_id # Tag signal for logging
+                            break # Apply boost only once
+
+            ml_score_pct = min(ml_score_pct, 100.0)
+
+            # --- AI SNIPER TRIGGER ---
+            # If the AI is confident, it creates its own signal even if no iceberg exists!
+            target_threshold = 85.0 if active_brain == 'LONG' else 84.0
+            
+            if ml_score_pct >= target_threshold:
+                signal_type = 'BUY_SIGNAL' if active_brain == 'LONG' else 'SELL_SIGNAL'
                 signal = {
                     'symbol': symbol,
-                    'type': 'BUY_SIGNAL', # Brain is trained for upward jumps
-                    'price': best_ask,
+                    'type': signal_type,
+                    'price': best_ask if signal_type == 'BUY_SIGNAL' else best_bid,
                     'size': 1.0,
                     'timestamp': round(time.time(), 4)
                 }
-            
-            signal['reason'] = 'Midas Brain Sniper'
-            signal['trend_pass'] = True
-            signal['volatility_pass'] = True
-            # 🛑 SURGICAL FIX: Spoof the ATR so engine.py can't veto it
-            signal['atr'] = 99.0
+                
+                # --- SURGICAL UPDATE: Add Direction & Alert for AI Sniper ---
+                signal['reason'] = f'Dual-Core Sniper ({active_brain})'
+                if active_brain == "LONG":
+                    signal['signal_direction'] = "BUY"
+                    print(f"[🚨 LONG SIGNAL FIRED] Dual-Core Sniper triggered by {active_brain} Brain.")
+                else: # SHORT
+                    signal['signal_direction'] = "SHORT"
+                    print(f"[🚨 SHORT SIGNAL FIRED] Dual-Core Sniper triggered by {active_brain} Brain.")
+                signal['trend_pass'] = True
+                signal['volatility_pass'] = True
+                # 🛑 SURGICAL FIX: Spoof the ATR so engine.py can't veto it
+                signal['atr'] = 99.0
 
-        if signal:
-            signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
-            signal['ml_confidence_value'] = ml_score_pct
+            if signal:
+                # 🛑 SURGICAL FIX: Prevent Brain/Iceberg Cross-Contamination
+                is_signal_buy = 'BUY' in signal['type']
+                is_brain_long = active_brain == 'LONG'
+                
+                # Only stamp the confidence score if the Brain and the Signal agree on direction
+                if is_signal_buy == is_brain_long:
+                    signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
+                    # 🛡️ IMMUNITY: If the Sniper fired, tell the Engine it's 100% confident so it doesn't veto an 80% Short
+                    signal['ml_confidence_value'] = 100.0 if 'Dual-Core Sniper' in signal.get('reason', '') else ml_score_pct
+                else:
+                    # They disagree! Crush the confidence to 0 to force a VETO
+                    signal['ml_confidence'] = "0.00%"
+                    signal['ml_confidence_value'] = 0.0
 
-    print(f"[X-RAY] ATR: {atr_mes:.2f} | ML Confidence: {ml_score_pct:.2f}% | Trend: {trend_alignment:.2f}")
+    print(f"[X-RAY - {active_brain} BRAIN] ATR: {atr_mes:.2f} | ML Confidence: {ml_score_pct:.2f}% | Trend: {trend_alignment:.2f}")
 
     # If neither the Iceberg nor the AI found a reason to trade, quit.
     if not signal:
@@ -615,7 +687,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
         return None
 
     ema_5 = calculate_ema(price_history, period=5)
-    atr = get_current_atr(price_history, period=14)
+    atr = get_current_atr(price_history, period=120)
     
     if ema_5 is None or atr == 0.0:
         return None

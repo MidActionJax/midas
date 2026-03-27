@@ -179,3 +179,61 @@ The Goal: Guarantee that once we are "in the green," we never let a winning trad
 - Market Session always says Unknown
 - Realized PnL: i think always stays at 0.00
 - No Shorting
+
+---
+Midas V2.0: The Quant Roadmap
+When you are ready to move beyond pure momentum and start acting like a true institutional desk, these are the two massive architectural upgrades you can build into Midas.
+
+Phase 1: DOM Boundary Ping-Pong (Order Book Imbalance)
+Right now, Midas hunts for momentum breakouts. This upgrade allows it to make money when the market is trapped in a boring, sideways box.
+
+The Concept: Instead of just looking for single Icebergs, the bot maps the "Ceiling" (Top 5 Sellers) and the "Floor" (Top 5 Buyers) of the DOM.
+
+The Strategy: When the Chop Index goes above 60 (meaning the market is dead/sideways), Midas stops looking for breakouts. Instead, it plays ping-pong. It buys when the price hits the floor wall, and short-sells when it hits the ceiling wall.
+
+The Code: You would add a function inside analyze_order_book that calculates the distance between the highest volume Ask and the highest volume Bid, establishing a real-time micro-range.
+
+Phase 2: "Level 3" NLP Sentiment (The Macro Brain)
+This is where you give your bot eyes and ears to the outside world, effectively turning it into a fully automated hedge fund.
+
+The Concept: Physics and momentum tell the bot what is happening. News and macro data tell the bot why it's happening.
+
+The Implementation: 1. The API: You hook a lightweight news API (like Benzinga Pro, FinancialJuice, or even a basic Twitter scraper for Federal Reserve accounts) into engine.py.
+2. The NLP Model: You pass those live headlines through a financial NLP model (like FinBERT, which is open-source and free). FinBERT reads the headline in milliseconds and grades it from -100 (Extremely Bearish) to +100 (Extremely Bullish).
+3. The Brain Upgrade: You retrain your Dual-Core models with a brand new 9th feature column called Macro_Sentiment.
+
+If Jerome Powell steps to a podium and says "We are raising interest rates," FinBERT grades it a -90. Your Short Brain sees the -90, combines it with the dropping Bid_Velocity, and fires a 99% confidence Short signal before human retail traders even finish reading the headline on CNBC.
+
+---
+
+🗺️ The Midas Master Roadmap (Multi-Agent Edition)
+🟢 Phase 1: The Baseline Calibration (Current Status)
+Goal: Prove the raw momentum math works and protect capital in chaotic environments.
+
+The Task: Run the engine through high-volatility replays using the strict 84.0% target threshold on the Dual-Core Sniper.
+
+The Metric: We are looking for a Profit Factor greater than 1.5 (Gross Wins divided by Gross Losses). We want to see those +3.0 point winners comfortably outpace the -1.0 point stop-outs.
+
+Completion State: Once Midas can survive a full 9:30 AM to 4:00 PM session in the green without manual intervention, the Baseline is complete.
+
+🟡 Phase 2: The Agentic Supervisor & Macro Box (The 3-Layer Architecture)
+Goal: Give the bot spatial awareness to avoid brick walls, and deploy a specialized Ping-Pong Agent to extract profit from sideways "Lunch Chop" markets.
+
+Step 1 (The Supervisor): Upgrade the Chop Index logic in the engine to act as the primary routing agent. If Chop < 50, it routes data to the Momentum Snipers. If Chop > 50, it puts the Snipers to sleep and routes data to the Ping-Pong Agent.
+
+Step 2 (The Macro Mapper): Upgrade analyze_order_book to map the spatial battlefield. It will identify the Top 5 highest-volume Bids (The Floor) and Top 5 highest-volume Asks (The Ceiling).
+
+Step 3 (The Veto): Implement your dad's Layer 1 rule: If a Momentum Sniper fires a Short signal, but the current price is less than 1.0 point away from "The Floor," the engine automatically vetoes the trade to prevent bouncing off a wall.
+
+Step 4 (The Ping-Pong Agent): Train a brand new, dedicated neural network (midas_brain_pingpong.pkl). Unlike the momentum brains that look for velocity, this agent is trained on exhaustion (The Rubber Band Effect). It evaluates Distance_from_SMA60 and the proximity to the Macro Box walls to accurately predict when the price will snap back to the middle of the range.
+
+🔴 Phase 3: The Institutional Inventory Tracker (V2.0)
+Goal: Give the bot long-term memory so it can track trapped buyers and predict massive end-of-day liquidation cascades.
+
+Step 1 (The State Manager): Update the global state_manager to include a Cumulative_Volume_Delta (CVD) integer. Every time a heartbeat fires, if the price ticked up, add the volume to the CVD. If the price ticked down, subtract it.
+
+Step 2 (The Data Harvesting): Write a Python script to generate a new feature column called Session_CVD across all your historical CSV training files.
+
+Step 3 (The Retraining): Feed those updated CSVs back into your Random Forest builder. The AI will learn the ultimate institutional tell: If the Session_CVD is massively positive (+20,000), but the price drops violently, the retail buyers are trapped and a crash is imminent.
+
+Step 4 (The Execution): Your models will gain narrative context, firing with 95%+ confidence right before massive 20-point drops because they can finally "see" the trapped volume waiting to liquidate.

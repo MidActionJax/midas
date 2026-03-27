@@ -55,15 +55,27 @@ class MidasEngine(threading.Thread):
             brain.model = brain._load_model()
             
         import joblib
-        truth_model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models', 'midas_brain.pkl')
-        if os.path.exists(truth_model_path):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        truth_model_long_path = os.path.join(base_dir, 'models', 'midas_brain.pkl')
+        truth_model_short_path = os.path.join(base_dir, 'models', 'midas_brain_short.pkl')
+        
+        if os.path.exists(truth_model_long_path):
             try:
-                new_truth = joblib.load(truth_model_path)
-                if new_truth:
-                    logic.TRUTH_ENGINE = new_truth
-                    print("--- Truth Engine reloaded successfully ---")
+                new_truth_long = joblib.load(truth_model_long_path)
+                if new_truth_long:
+                    logic.TRUTH_ENGINE_LONG = new_truth_long
+                    print("--- Dual-Core Engine: LONG Brain reloaded successfully ---")
             except Exception as e:
-                print(f"Error reloading Truth Engine: {e}")
+                print(f"Error reloading LONG Brain: {e}")
+
+        if os.path.exists(truth_model_short_path):
+            try:
+                new_truth_short = joblib.load(truth_model_short_path)
+                if new_truth_short:
+                    logic.TRUTH_ENGINE_SHORT = new_truth_short
+                    print("--- Dual-Core Engine: SHORT Brain reloaded successfully ---")
+            except Exception as e:
+                print(f"Error reloading SHORT Brain: {e}")
 
     def flatten_all(self):
         print("!!! EMERGENCY KILL SWITCH ACTIVATED - FLATTENING ALL POSITIONS !!!")
@@ -414,6 +426,15 @@ class MidasEngine(threading.Thread):
                                 # --- DECISION TRACE ---
                                 print(f"--- SIGNAL TRACE [{symbol}] ---")
                                 
+                                # 🛑 SURGICAL FIX: Force Iceberg to respect the AI's chosen direction
+                                active_brain_reason = signal.get('reason', '')
+                                if 'SHORT' in active_brain_reason:
+                                    signal['type'] = 'SELL_SIGNAL'
+                                    signal['signal_direction'] = 'SHORT'
+                                elif 'LONG' in active_brain_reason:
+                                    signal['type'] = 'BUY_SIGNAL'
+                                    signal['signal_direction'] = 'BUY'
+
                                 # 0. Core Strategy Filters (Trend & Volatility)
                                 trend = signal.get('trend')
                                 market_trend = trend
@@ -430,7 +451,7 @@ class MidasEngine(threading.Thread):
                                 else:
                                     trend_pass = signal.get('trend_pass', True)
                                 
-                                if 'Momentum' in signal.get('reason', ''):
+                                if 'Momentum' in signal.get('reason', '') or 'Dual-Core' in active_brain_reason:
                                     trend_pass = True
 
                                 vol_pass = signal.get('volatility_pass', True)
@@ -544,12 +565,16 @@ class MidasEngine(threading.Thread):
                                                         time.sleep(0.5)
                                                     trade_executed = self.adapter.execute_buy(symbol, dynamic_size, exec_price, signal_id=str(signal['timestamp']))
                                                 else:
+                                                    pos_type = 'SELL'
                                                     if current_pos > 0:
                                                         print(f"--- REVERSAL: Flattening Long {current_pos} before Auto-Sell ---")
                                                         self.adapter.execute_sell(symbol, current_pos, exec_price, signal_id='REVERSAL')
                                                         time.sleep(0.5)
-                                                    trade_executed = self.adapter.execute_sell(symbol, dynamic_size, exec_price, signal_id=str(signal['timestamp']))
-                                                    pos_type = 'SELL'
+                                                    # Check for the AI sniper's direction, default to SELL for regular signals
+                                                    side_to_send = 'SELL' # Default for regular signals
+                                                    if signal.get('signal_direction') == 'SHORT':
+                                                        side_to_send = 'SHORT' # Override for AI Short signal
+                                                    trade_executed = self.adapter.execute_sell(symbol, dynamic_size, exec_price, signal_id=str(signal['timestamp']), side=side_to_send)
                                                 
                                                 if trade_executed:
                                                     logger.update_user_decision(str(signal['timestamp']), 'APPROVED')
