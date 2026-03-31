@@ -57,7 +57,7 @@ df.dropna(inplace=True)
 features = [
     'Bid_Vol', 'Ask_Vol', 'Imbalance_Skew_30s', 
     'Bid_Drop_Velocity', 'Ask_Surge_Velocity', 
-    'Price_Momentum_10s', 'Distance_from_SMA60', 'Volatility_60s'
+    'Price_Momentum_10s', 'Distance_from_SMA60', 'Volatility_60s', 'Session_CVD'
 ]
 X = df[features]
 y = df['Target']

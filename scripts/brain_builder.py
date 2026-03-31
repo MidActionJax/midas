@@ -45,7 +45,7 @@ df.dropna(inplace=True)
 # We are PRUNING the dead weight. We removed Minute, Imbalance, and Imbalance_Delta.
 features = [
     'Bid_Vol', 'Best_Bid', 'Ask_Vol', 'Best_Ask', 
-    'Mid_Price', 'Hour', 'Trend_Alignment', 'Volatility_60s'
+    'Mid_Price', 'Hour', 'Trend_Alignment', 'Volatility_60s', 'Session_CVD'
 ]
 X = df[features]
 y = df['Target']
