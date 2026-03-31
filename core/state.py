@@ -41,6 +41,7 @@ class StateManager:
         self.MAX_DAILY_LOSS = -250.00
         self.circuit_breaker_tripped = False
         self.current_market_time = None
+        self.session_cvd = 0.0
         self.state_file = state_file
         self.load_price_history()
 
@@ -154,6 +155,27 @@ class StateManager:
     def get_active_positions(self):
         with self._lock:
             return list(self.active_positions)
+
+    def update_cvd(self, current_price, last_price, volume=1.0):
+        with self._lock:
+            price_delta = current_price - last_price
+            if price_delta > 0:
+                self.session_cvd += volume
+            elif price_delta < 0:
+                self.session_cvd -= volume
+
+    def reset_cvd(self):
+        with self._lock:
+            self.session_cvd = 0.0
+
+    def reset_for_new_day(self):
+        """Resets daily tracking variables for a new trading session."""
+        self.reset_cvd()
+        with self._lock:
+            self.daily_pnl = 0.0
+            self.live_wins = 0
+            self.live_trades = 0
+            self.circuit_breaker_tripped = False
 
     def add_pnl(self, amount):
         with self._lock:

@@ -24,8 +24,10 @@ brain = MidasBrain()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH_LONG = os.path.join(BASE_DIR, 'models', 'midas_brain.pkl')
 MODEL_PATH_SHORT = os.path.join(BASE_DIR, 'models', 'midas_brain_short.pkl')
+MODEL_PATH_PINGPONG = os.path.join(BASE_DIR, 'models', 'midas_brain_pingpong.pkl')
 TRUTH_ENGINE_LONG = None
 TRUTH_ENGINE_SHORT = None
+TRUTH_ENGINE_PINGPONG = None
 MIN_CONFIDENCE_THRESHOLD = 85.0
 
 class DualCoreMemory:
@@ -54,6 +56,14 @@ if os.path.exists(MODEL_PATH_SHORT):
 else:
     print(f"WARNING: No SHORT model file found at {MODEL_PATH_SHORT}. Check your folder structure.")
 
+if os.path.exists(MODEL_PATH_PINGPONG):
+    try:
+        TRUTH_ENGINE_PINGPONG = joblib.load(MODEL_PATH_PINGPONG)
+        print(f"INFO: Ping-Pong Brain loaded successfully from {MODEL_PATH_PINGPONG}")
+    except Exception as e:
+        print(f"ERROR: Could not load Ping-Pong Brain: {e}")
+else:
+    print(f"WARNING: No Ping-Pong model file found at {MODEL_PATH_PINGPONG}. Check your folder structure.")
 
 Trade = namedtuple('Trade', ['timestamp', 'size', 'side'])
 
@@ -222,7 +232,7 @@ def get_dynamic_thresholds():
         if now_est >= power_hour_end and now_est < halt_end:
             return {'min_confidence': 100.0, 'halt': True, 'min_atr': 2.0, 'strategy': 'NONE'}
         elif now_est >= halt_end or now_est < asian_end:
-            return {'min_confidence': 60.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
 
         if now_est < datetime_time(9, 30):
             return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
@@ -303,6 +313,52 @@ def get_current_atr(price_history, period=120):
     # Return the Average True Range of those 30-second blocks
     return sum(ranges) / len(ranges)
 
+def get_dynamic_wall_threshold(order_book, multiplier=4.0, absolute_min=25.0):
+    """
+    Calculates what a 'Massive Wall' is right now based on current DOM averages.
+    It requires a wall to be 'multiplier' times larger than the average resting order,
+    with a hard floor of 'absolute_min' to ignore pure noise.
+    """
+    if not order_book: 
+        return absolute_min
+        
+    bids = order_book.get('bids', [])
+    asks = order_book.get('asks', [])
+    all_vols = [float(size) for _, size in bids] + [float(size) for _, size in asks]
+    
+    if not all_vols: 
+        return absolute_min
+    
+    # Only average the top 20 levels of the book to get the immediate liquidity zone
+    top_vols = sorted(all_vols, reverse=True)[:20]
+    avg_vol = sum(top_vols) / len(top_vols)
+    
+    return max(absolute_min, avg_vol * multiplier)
+
+def get_macro_box(order_book, current_price):
+    """
+    Globally tracks the massive Iceberg walls (Floor and Ceiling) on the DOM.
+    Any brain (Momentum or Ping-Pong) can call this to see the battlefield.
+    """
+    if not order_book:
+        return current_price, 0.0, current_price, 0.0
+
+    bids = order_book.get('bids', [])
+    asks = order_book.get('asks', [])
+
+    best_bid = bids[0][0] if bids else current_price
+    best_ask = asks[0][0] if asks else current_price
+
+    # Scan the DOM and find the single heaviest volume wall on both sides
+    macro_floor_price = max(bids, key=lambda x: float(x[1]))[0] if bids else best_bid
+    macro_floor_vol = float(max(bids, key=lambda x: float(x[1]))[1]) if bids else 0.0
+    
+    macro_ceiling_price = max(asks, key=lambda x: float(x[1]))[0] if asks else best_ask
+    macro_ceiling_vol = float(max(asks, key=lambda x: float(x[1]))[1]) if asks else 0.0
+    print(f"[🧊 ICEBERG RADAR] Floor: {macro_floor_price} ({macro_floor_vol} contracts) | Ceiling: {macro_ceiling_price} ({macro_ceiling_vol} contracts)")
+
+    return macro_floor_price, macro_floor_vol, macro_ceiling_price, macro_ceiling_vol
+
 
 def calculate_choppiness_index(df, period=14):
     """
@@ -332,8 +388,9 @@ def calculate_choppiness_index(df, period=14):
     numerator = atr_sum
     denominator = highest_high - lowest_low
     
-    # Avoid division by zero
-    chop = np.where(denominator == 0, 100, 100 * np.log10(numerator / denominator) / np.log10(period))
+    # Prevent premature NaN evaluation by injecting a safe divisor
+    safe_denominator = np.where(denominator == 0, 1e-10, denominator)
+    chop = np.where(denominator == 0, 50.0, 100 * np.log10(numerator / safe_denominator) / np.log10(period))
     
     # Return the last value, ensure it's a float
     return float(chop[-1]) if len(chop) > 0 else 50.0
@@ -446,6 +503,15 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         # If the book is empty, we default to 0 to prevent crashes
         best_bid = bids[0][0] if bids else 0
         best_ask = asks[0][0] if asks else 0
+        
+        # --- PHASE 2, STEP 2: THE MACRO MAPPER ---
+        # Scan the DOM and find the single heaviest volume wall on both sides
+        macro_floor_price = max(bids, key=lambda x: float(x[1]))[0] if bids else best_bid
+        macro_floor_vol = float(max(bids, key=lambda x: float(x[1]))[1]) if bids else 0.0
+        
+        macro_ceiling_price = max(asks, key=lambda x: float(x[1]))[0] if asks else best_ask
+        macro_ceiling_vol = float(max(asks, key=lambda x: float(x[1]))[1]) if asks else 0.0
+        dynamic_wall = get_dynamic_wall_threshold(order_book)
         bid_vol = sum(size for price, size in bids)
         ask_vol = sum(size for price, size in asks)
         
@@ -488,7 +554,8 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 'Mid_Price': mid_price,
                 'Hour': current_hour,
                 'Trend_Alignment': trend_alignment,
-                'Volatility_60s': volatility_60s
+                'Volatility_60s': volatility_60s,
+                'Session_CVD': state_manager.session_cvd
             }])
             probs = TRUTH_ENGINE_LONG.predict_proba(features)[0]
             success_prob = probs[1]
@@ -504,7 +571,8 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 'Ask_Surge_Velocity': ask_surge_velocity,
                 'Price_Momentum_10s': price_momentum_10s,
                 'Distance_from_SMA60': distance_from_sma60,
-                'Volatility_60s': volatility_60s
+                'Volatility_60s': volatility_60s,
+                'Session_CVD': state_manager.session_cvd
             }])
             probs = TRUTH_ENGINE_SHORT.predict_proba(features)[0]
             success_prob = probs[1]
@@ -542,18 +610,33 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
             ml_score_pct = min(ml_score_pct, 100.0)
 
             # --- AI SNIPER TRIGGER ---
-            # If the AI is confident, it creates its own signal even if no iceberg exists!
+            # Set asymmetric thresholds: Escalator Up (85%), Elevator Down (84%)
             target_threshold = 85.0 if active_brain == 'LONG' else 84.0
             
+            # If the AI is confident, it creates its own signal even if no iceberg exists!
             if ml_score_pct >= target_threshold:
-                signal_type = 'BUY_SIGNAL' if active_brain == 'LONG' else 'SELL_SIGNAL'
-                signal = {
-                    'symbol': symbol,
-                    'type': signal_type,
-                    'price': best_ask if signal_type == 'BUY_SIGNAL' else best_bid,
-                    'size': 1.0,
-                    'timestamp': round(time.time(), 4)
-                }
+                
+                # --- PHASE 2, STEP 3: THE MACRO VETO ---
+                distance_to_floor = current_price_mes - macro_floor_price
+                distance_to_ceiling = macro_ceiling_price - current_price_mes
+                
+                # LAYER 1 RULE: Do not shoot into an iceberg wall!
+                if active_brain == 'SHORT' and distance_to_floor <= 1.5 and macro_floor_vol >= dynamic_wall:
+                    print(f"[🛑 MACRO VETO] SHORT Blocked! Price ({current_price_mes}) is aiming at a {macro_floor_vol}-contract FLOOR wall at {macro_floor_price} (Threshold: {dynamic_wall:.1f}).")
+                    # Signal remains None, forcing a HOLD
+                elif active_brain == 'LONG' and distance_to_ceiling <= 1.5 and macro_ceiling_vol >= dynamic_wall:
+                    print(f"[🛑 MACRO VETO] LONG Blocked! Price ({current_price_mes}) is aiming at a {macro_ceiling_vol}-contract CEILING wall at {macro_ceiling_price} (Threshold: {dynamic_wall:.1f}).")
+                    # Signal remains None, forcing a HOLD
+                else:
+                    # Path is clear! Build the signal.
+                    signal_type = 'BUY_SIGNAL' if active_brain == 'LONG' else 'SELL_SIGNAL'
+                    signal = {
+                        'symbol': symbol,
+                        'type': signal_type,
+                        'price': best_ask if signal_type == 'BUY_SIGNAL' else best_bid,
+                        'size': 1.0,
+                        'timestamp': round(time.time(), 4)
+                    }
                 
                 # --- SURGICAL UPDATE: Add Direction & Alert for AI Sniper ---
                 signal['reason'] = f'Dual-Core Sniper ({active_brain})'
@@ -569,19 +652,9 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 signal['atr'] = 99.0
 
             if signal:
-                # 🛑 SURGICAL FIX: Prevent Brain/Iceberg Cross-Contamination
-                is_signal_buy = 'BUY' in signal['type']
-                is_brain_long = active_brain == 'LONG'
-                
-                # Only stamp the confidence score if the Brain and the Signal agree on direction
-                if is_signal_buy == is_brain_long:
-                    signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
-                    # 🛡️ IMMUNITY: If the Sniper fired, tell the Engine it's 100% confident so it doesn't veto an 80% Short
-                    signal['ml_confidence_value'] = 100.0 if 'Dual-Core Sniper' in signal.get('reason', '') else ml_score_pct
-                else:
-                    # They disagree! Crush the confidence to 0 to force a VETO
-                    signal['ml_confidence'] = "0.00%"
-                    signal['ml_confidence_value'] = 0.0
+                signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
+                # 🛡️ IMMUNITY: If the Sniper fired, pass the raw score.
+                signal['ml_confidence_value'] = ml_score_pct
 
     print(f"[X-RAY - {active_brain} BRAIN] ATR: {atr_mes:.2f} | ML Confidence: {ml_score_pct:.2f}% | Trend: {trend_alignment:.2f}")
 
@@ -623,57 +696,93 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
 def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
     """
-    Mean Reversion strategy for ranging markets.
+    The Ping-Pong Agent:
+    Buys the Floor and Sells the Ceiling when the market is trapped in chop.
     """
-    if chop_index <= 61.8 or not order_book or symbol != 'MES':
+    # Chop Index must be high (sideways market) to play ping-pong
+    if chop_index <= 50.0 or not order_book or symbol != 'MES':
         return None
 
-    if len(price_history) < 20:
-        return None
-
-    recent_prices = price_history[-20:]
-    rolling_high = max(recent_prices)
-    rolling_low = min(recent_prices)
-    price_range = rolling_high - rolling_low
-
-    if price_range == 0:
+    if len(price_history) < 60:
         return None
 
     current_price = price_history[-1]
-    lower_band = rolling_low + (0.1 * price_range)
-    upper_band = rolling_high - (0.1 * price_range)
+    sma_60 = sum(price_history[-60:]) / 60
+    
+    # 1. Use the Global Tracker to find the walls
+    floor_price, floor_vol, ceiling_price, ceiling_vol = get_macro_box(order_book, current_price)
+
+    dynamic_wall = get_dynamic_wall_threshold(order_book)
+
+    # 2. Calculate distance to the walls
+    dist_to_floor = current_price - floor_price
+    dist_to_ceiling = ceiling_price - current_price
+
+    ml_confidence = 80.0
+    if TRUTH_ENGINE_PINGPONG:
+        try:
+            features = pd.DataFrame([{
+                'Distance_from_SMA60': abs(current_price - sma_60),
+                'Floor_Vol': floor_vol,
+                'Ceiling_Vol': ceiling_vol,
+                'ATR': get_current_atr(price_history),
+                'Chop_Index': chop_index
+            }])
+            probs = TRUTH_ENGINE_PINGPONG.predict_proba(features)[0]
+            ml_confidence = probs[1] * 100.0
+        except Exception as e:
+            print(f"Error calculating Ping-Pong AI confidence: {e}")
 
     signal = None
-    threshold = 0.5
-
-    if current_price <= lower_band and 'bids' in order_book and order_book['bids']:
-        for price, size in order_book['bids']:
-            if float(size) > threshold:
-                signal = {
-                    'symbol': symbol,
-                    'type': 'BUY_SIGNAL',
-                    'price': price,
-                    'size': float(size),
-                    'reason': 'Mean Reversion',
-                    'confidence_score': 80.0,
-                    'timestamp': round(time.time(), 4)
-                }
-                break
-
-    if not signal and current_price >= upper_band and 'asks' in order_book and order_book['asks']:
-        for price, size in order_book['asks']:
-            if float(size) > threshold:
-                signal = {
-                    'symbol': symbol,
-                    'type': 'SELL_SIGNAL',
-                    'price': price,
-                    'size': float(size),
-                    'reason': 'Mean Reversion',
-                    'confidence_score': 80.0,
-                    'timestamp': round(time.time(), 4)
-                }
-                break
-
+    print(f"[X-RAY - PING-PONG] ATR: {get_current_atr(price_history):.2f} | ML Confidence: {ml_confidence:.2f}% | Chop: {chop_index:.2f}")
+    
+    # PING-PONG RULE 1: If resting on a strong floor, bounce up to the middle (SMA 60)
+    if dist_to_floor <= 1.0 and floor_vol >= dynamic_wall and current_price < sma_60:
+        print(f"[🏓 PING-PONG] Floor bounce detected at {floor_price}. Aiming for SMA 60 ({sma_60:.2f})")
+        signal = {
+            'symbol': symbol,
+            'type': 'BUY_SIGNAL',
+            'price': current_price,
+            'size': 1.0,
+            'reason': 'Ping-Pong (Floor Bounce)',
+            'confidence_score': ml_confidence,
+            'ml_confidence_value': ml_confidence,
+            'timestamp': round(time.time(), 4),
+            'trend_pass': True,        # Bypasses trend filter (chop is sideways)
+            'volatility_pass': True,   # Bypasses volatility filter
+            'atr': 99.0                # Spoofs ATR so engine doesn't block it
+        }
+        
+    # PING-PONG RULE 2: If hitting a strong ceiling, reject down to the middle (SMA 60)
+    elif dist_to_ceiling <= 1.0 and ceiling_vol >= dynamic_wall and current_price > sma_60:
+        print(f"[🏓 PING-PONG] Ceiling rejection detected at {ceiling_price}. Aiming for SMA 60 ({sma_60:.2f})")
+        signal = {
+            'symbol': symbol,
+            'type': 'SELL_SIGNAL',
+            'signal_direction': 'SHORT',
+            'price': current_price,
+            'size': 1.0,
+            'reason': 'Ping-Pong (Ceiling Reject)',
+            'confidence_score': ml_confidence,
+            'ml_confidence_value': ml_confidence,
+            'timestamp': round(time.time(), 4),
+            'trend_pass': True,
+            'volatility_pass': True,
+            'atr': 99.0
+        }
+        
+    if signal:
+        # Add rich context so your CSV logs it perfectly for future ML training
+        if ml_confidence >= 80.0:
+            signal['ml_confidence_value'] = 100.0  # Spoof the engine so it doesn't Veto
+        signal['context_data'] = {
+            'ema_val': sma_60,
+            'trend': 'SIDEWAYS',
+            'atr': get_current_atr(price_history),
+            'session': 'Chop Regime',
+            'whale_strength': floor_vol if 'BUY' in signal['type'] else ceiling_vol
+        }
+        
     return signal
 
 def analyze_breakout(symbol, order_book, price_history, chop_index):

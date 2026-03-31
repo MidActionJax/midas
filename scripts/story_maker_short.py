@@ -20,7 +20,19 @@ df = df.dropna(subset=['Timestamp'])
 
 df['Timestamp'] = df['Timestamp'].dt.tz_localize('US/Arizona').dt.tz_convert('US/Eastern')
 
-print("🗜️ Compressing chaos into 1-second snapshots...")
+print("📈 Calculating Institutional Session CVD...")
+df.sort_values('Timestamp', inplace=True)
+df['Price_Change'] = df['Price'].diff()
+df['Tick_CVD'] = 0.0
+df.loc[df['Price_Change'] > 0, 'Tick_CVD'] = df['Volume']
+df.loc[df['Price_Change'] < 0, 'Tick_CVD'] = -df['Volume']
+
+# Reset if there's a 2-hour gap (new session)
+df['Time_Gap'] = df['Timestamp'].diff().dt.total_seconds()
+df['Session_ID'] = (df['Time_Gap'] > 7200).cumsum()
+df['Session_CVD'] = df.groupby('Session_ID')['Tick_CVD'].cumsum()
+
+print("�️ Compressing chaos into 1-second snapshots...")
 # Set the time as our index so we can group it
 df.set_index('Timestamp', inplace=True)
 
@@ -31,6 +43,9 @@ asks = df[df['Side'] == 'Ask'].resample('1s').agg({'Volume': 'sum', 'Price': 'mi
 
 # Glue them back together into one clean order book
 book = pd.merge(bids, asks, left_index=True, right_index=True, how='outer').ffill().dropna()
+
+cvd_1s = df['Session_CVD'].resample('1s').last()
+book = book.join(cvd_1s).ffill()
 
 print("🧮 Calculating Order Book Imbalance and Time Context...")
 book['Imbalance'] = book['Bid_Vol'] - book['Ask_Vol']

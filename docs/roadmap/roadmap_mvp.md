@@ -219,7 +219,7 @@ Completion State: Once Midas can survive a full 9:30 AM to 4:00 PM session in th
 🟡 Phase 2: The Agentic Supervisor & Macro Box (The 3-Layer Architecture)
 Goal: Give the bot spatial awareness to avoid brick walls, and deploy a specialized Ping-Pong Agent to extract profit from sideways "Lunch Chop" markets.
 
-Step 1 (The Supervisor): Upgrade the Chop Index logic in the engine to act as the primary routing agent. If Chop < 50, it routes data to the Momentum Snipers. If Chop > 50, it puts the Snipers to sleep and routes data to the Ping-Pong Agent.
+XXX Step 1 (The Supervisor): Upgrade the Chop Index logic in the engine to act as the primary routing agent. If Chop < 50, it routes data to the Momentum Snipers. If Chop > 50, it puts the Snipers to sleep and routes data to the Ping-Pong Agent.
 
 Step 2 (The Macro Mapper): Upgrade analyze_order_book to map the spatial battlefield. It will identify the Top 5 highest-volume Bids (The Floor) and Top 5 highest-volume Asks (The Ceiling).
 
@@ -237,3 +237,50 @@ Step 2 (The Data Harvesting): Write a Python script to generate a new feature co
 Step 3 (The Retraining): Feed those updated CSVs back into your Random Forest builder. The AI will learn the ultimate institutional tell: If the Session_CVD is massively positive (+20,000), but the price drops violently, the retail buyers are trapped and a crash is imminent.
 
 Step 4 (The Execution): Your models will gain narrative context, firing with 95%+ confidence right before massive 20-point drops because they can finally "see" the trapped volume waiting to liquidate.
+
+
+---
+Part 2: The Phase 2 Engineering Roadmap
+Phase 2 is where we take the blinders off the AI. We give it peripheral vision. Here is the exact, step-by-step roadmap to fully develop and integrate Phase 2.
+
+Stage 1: The Telemetry Audit (Days 1-5)
+You cannot engineer a solution until you know exactly how the bot is failing.
+
+Run the Live Data: Let the bot run this week.
+
+Find the Traps: At the end of the week, export the CSV trade logs. Filter for every trade that had a 90%+ ML Confidence but still hit the $6 Stop Loss.
+
+The Autopsy: Look at those specific timestamps on your NinjaTrader chart. Why did it fail? Was the 1-hour trend against it? Was the overall DOM heavy with buyers?
+
+Stage 2: Code the "DOM Imbalance" Shield
+Once you verify that the bot is getting trapped by macro volume, we write the Imbalance Filter into logic.py.
+
+The Math: We add code to calculate the total resting liquidity of the entire order book, not just the inside bid/ask.
+imbalance_ratio = total_bid_volume / total_ask_volume
+
+The Logic Gate: We add a Hard Guard in the analyze_order_book function:
+"If the SHORT Brain wants to fire, but the imbalance_ratio is > 1.5 (meaning there are 50% more buyers than sellers globally), VETO the trade."
+
+The Result: The bot stops shorting into hidden walls of buy-side liquidity.
+
+Stage 3: Code the "Macro Alignment" Filter
+This cures the tunnel vision. We force the 1-minute Snipers to ask the 15-minute or 1-hour chart for permission before firing.
+
+Data Ingestion: We update your NinjaTrader bridge to pass the 15-minute SMA (Simple Moving Average) alongside the 1-minute data.
+
+The Logic Gate: We add a new Trend Guard:
+"If the 1-minute AI triggers a SELL_SIGNAL, check the 15-minute SMA. If the 15-minute SMA is pointing UP, VETO the trade."
+
+The Result: Your bot will never again short the bottom of a micro-dip during a massive macro rally. It will only trade when the micro and the macro are flowing in the exact same direction.
+
+Stage 4: Retraining the Neural Network (The MLOps Loop)
+This is the final, most crucial step. You don't just want hardcoded Vetoes; you want the AI to learn the new math.
+
+Update brain_builder_short.py: We add DOM_Imbalance and Macro_Trend_Distance as brand new feature columns in your pandas dataframe.
+
+Feed the Live Data: We take all the new, live CSV data you collected during Stage 1 and run the training script again.
+
+The Brain Upgrade: The Random Forest algorithm will mathematically discover that whenever the Macro Trend is against it, it loses money. It will rewrite its own decision trees.
+
+Stage 5: Deployment of V2
+You swap the old .pkl files for the new .pkl files, run pm2 restart midas-bot, and you now possess a fully context-aware, multi-timeframe quantitative trading engine.

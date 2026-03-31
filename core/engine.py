@@ -169,13 +169,23 @@ class MidasEngine(threading.Thread):
                             pos['dynamic_sl'] = -1.0 # STRICT -1.0 POINT STOP LOSS
                             
                         # --- TASK 2: INSTANT AUTO-BREAKEVEN & TIGHT TRAIL ---
-                        if points_profit >= 1.0:
-                            new_sl = points_profit - 1.0
+                        # --- THE RATCHET TRAILING STOP ---
+                        if points_profit >= 1.5 and pos['dynamic_sl'] < 0.5:
+                            pos['dynamic_sl'] = 0.5
+                            print(f"--- RISK FREE: {pos_symbol} SL moved to +0.5 ---")
+                        
+                        elif points_profit >= 3.0 and pos['dynamic_sl'] < 1.5:
+                            pos['dynamic_sl'] = 1.5
+                            print(f"--- PROFIT SECURED: {pos_symbol} SL moved to +1.5 ---")
+                            
+                        elif points_profit >= 5.0:
+                            new_sl = points_profit - 2.0
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                print(f"--- AUTO-BREAKEVEN / TRAIL: {pos_symbol} SL moved to +{new_sl:.2f} points ---")
+                                print(f"--- RIDING WAVE: {pos_symbol} Trailing SL raised to +{new_sl:.2f} ---")
                                  
-                        hit_tp = points_profit >= 3.0 # STRICT +3.0 POINT PROFIT TARGET
+                        # Remove the hard ceiling
+                        hit_tp = False 
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
@@ -328,10 +338,34 @@ class MidasEngine(threading.Thread):
                                 print(f"❌ ANOMALY FIREWALL: Engine rejected cross-wired price for {symbol}. {last_price} -> {price}")
                                 continue
 
+                        if last_price is not None and symbol == 'MES':
+                            # Extract the volume of the last trade from the adapter
+                            volume = getattr(self.adapter, 'last_trade_volume', 1.0)
+                            state.state_manager.update_cvd(price, last_price, volume)
+
                         print(f"HEARTBEAT: Price of {symbol} is {price}")
                         state.state_manager.add_price(symbol, price)
+                        print(f"--- CURRENT SESSION CVD: {state.state_manager.session_cvd} ---")
                         self.price_buffer[symbol].append(price)
-
+                        # --- GLOBAL ICEBERG RADAR ---
+                        if symbol == 'MES':
+                            # Ask NinjaTrader for the DOM data first!
+                            market_depth = self.adapter.get_market_depth(symbol)
+                            if market_depth:
+                                try:
+                                    bids = market_depth.get('bids', [])
+                                    asks = market_depth.get('asks', [])
+                                    
+                                    if bids and asks:
+                                        floor_price = max(bids, key=lambda x: float(x[1]))[0]
+                                        floor_vol = max(bids, key=lambda x: float(x[1]))[1]
+                                        
+                                        ceil_price = max(asks, key=lambda x: float(x[1]))[0]
+                                        ceil_vol = max(asks, key=lambda x: float(x[1]))[1]
+                                        
+                                        print(f"[🧊 ICEBERG RADAR] Floor: {floor_price} ({floor_vol} vol) | Ceiling: {ceil_price} ({ceil_vol} vol)")
+                                except Exception as e:
+                                    pass
                         # --- Bar Creation and Choppiness Index Calculation ---
                         current_time = time.time()
                         if current_time - self.last_bar_time[symbol] >= 60:
@@ -396,10 +430,13 @@ class MidasEngine(threading.Thread):
 
                             if thresholds['halt']:
                                 pass
-                            else:
-                                # TEMPORARY SURGICAL FIX: Force ML-Enabled Iceberg Strategy exclusively.
+                            elif chop_index > 50.0:
                                 session_name = logic.get_market_session()
-                                print(f"--- ACTIVE PROFILE: {session_name} (CHOP INDEX BYPASSED, FORCING ML) ---")
+                                print(f"--- ACTIVE PROFILE: {session_name} (CHOP: {chop_index:.2f} - SIDEWAYS MARKET. PING-PONG AGENT ACTIVE) ---")
+                                signal = logic.analyze_mean_reversion(symbol, market_depth, state.state_manager.price_history.get(symbol, []), chop_index)
+                            else:
+                                session_name = logic.get_market_session()
+                                print(f"--- ACTIVE PROFILE: {session_name} (CHOP: {chop_index:.2f} - TRENDING. SNIPERS ACTIVE) ---")
                                 signal = logic.analyze_order_book(
                                     symbol, market_depth, state.state_manager.price_history, self.adapter
                                 )
@@ -590,8 +627,9 @@ class MidasEngine(threading.Thread):
                                                     }
                                                     state.state_manager.add_position(position)
                                                     state.state_manager.last_trade_time = current_time
-                                                    state.state_manager.remove_pending_signal(signal)
                                                     print(f"✅ AUTO-TRADE EXECUTED: {symbol} at {exec_price} ({pos_type})")
+                                            
+                                            state.state_manager.remove_pending_signal(signal)
 
                 except Exception as e:
                     print(f"Error in engine loop: {e}")
@@ -622,6 +660,8 @@ def start_engine():
 
         print(f"Engine starting in mode: {config.TRADING_MODE} for {symbols_to_trade}")
         engine_thread = MidasEngine(symbols_to_trade)
+        state.state_manager.reset_cvd()
+        print("--- Session CVD Reset to 0.0 ---")
         engine_thread.start()
 
 def stop_engine():
