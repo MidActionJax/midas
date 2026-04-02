@@ -22,6 +22,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int AccountPort = 36970;
         private string lastChartTime = DateTime.Now.ToString("o");
         private DateTime lastDepthUpdate = DateTime.MinValue;
+        private EMA ema15; 
+        private double currentBidVol = 0;
+        private double currentAskVol = 0;
 
 
         protected override void OnStateChange()
@@ -37,13 +40,23 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Configure)
             {
+                // Add a 15-minute data series in the background (Index 1)
+                AddDataSeries(BarsPeriodType.Minute, 15);
+
                 // --- Account Audit ---
                 foreach(Account a in Cbi.Account.All) { Print("AVAILABLE ACCOUNT: " + a.Name); }
                 // -------------------
 
                 Print("SEARCHING FOR: DEMO5611174 or Playback101");
-                // Find the specific Demo account or Playback account
-                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174" || a.Name == "Playback101");
+                // Clean, case-insensitive search
+                var allAccounts = Cbi.Account.All.ToList();
+
+                account = allAccounts.FirstOrDefault(a => a.Name.Equals("DEMO5611174", StringComparison.OrdinalIgnoreCase));
+
+                if (account == null) {
+                    Print("Demo account not found, checking for Playback...");
+                    account = allAccounts.FirstOrDefault(a => a.Name.Equals("Playback101", StringComparison.OrdinalIgnoreCase));
+                }
 
                 if (account != null) 
                 {
@@ -58,6 +71,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
+                // Initialize the 15-period EMA on the 15-minute chart
+                ema15 = EMA(BarsArray[1], 15);
+
                 server = new TcpListener(IPAddress.Any, ServerPort);
                 server.Start();
                 isRunning = true;
@@ -80,9 +96,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             Print("--- DEBUG START ---");
             
             // 1. Check Account
-            if (account == null) {
-                account = Cbi.Account.All.FirstOrDefault(a => a.Name == "DEMO5611174" || a.Name == "Playback101");
-                Print("1. Searching for Account... " + (account != null ? "FOUND" : "NOT FOUND"));
+            // If we are on Playback (or null), try to see if the Demo account is now available
+            if (account == null || account.Name.Equals("Playback101", StringComparison.OrdinalIgnoreCase)) 
+            {
+                var demoAcc = Cbi.Account.All.FirstOrDefault(a => a.Name.Equals("DEMO5611174", StringComparison.OrdinalIgnoreCase));
+                if (demoAcc != null) {
+                    if (account != null) account.ExecutionUpdate -= OnExecutionUpdate; // Unhook old
+                    account = demoAcc;
+                    account.ExecutionUpdate += OnExecutionUpdate; // Hook new
+                    Print("UPGRADED TO ACCOUNT: " + account.Name);
+                }
+                else if (account == null) {
+                    account = Cbi.Account.All.FirstOrDefault(a => a.Name.Equals("Playback101", StringComparison.OrdinalIgnoreCase));
+                }
             }
             
             if (account == null) return;
@@ -94,7 +120,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                     try {
                         // 2. Check Values
                         double currentPnl = account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                        double balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
+                        
+                        double balance = account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+                        if (balance == 0) balance = account.Get(AccountItem.CashValue, Currency.UsDollar);
+
                         Print(string.Format("2. Data Pulled - Balance: {0}, PnL: {1}", balance, currentPnl));
 
                         int currentPos = 0;
@@ -109,7 +138,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                             "\"chart_time\":\"" + lastChartTime + "\"," +
                             "\"ACCOUNT_VALUE\":" + balance + "," +
                             "\"DAILY_PNL\":" + currentPnl + "," +
-                            "\"CASH_VALUE\":" + account.Get(AccountItem.CashValue, Currency.UsDollar) + "," +
+                            "\"CASH_VALUE\":" + balance + "," +
                             "\"POSITION_SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
                             "\"POSITION_QUANTITY\":" + currentPos +
                         "}";
@@ -236,8 +265,16 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         protected override void OnMarketData(NinjaTrader.Data.MarketDataEventArgs marketDataUpdate)
         {
+            if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Bid)
+            {
+                currentBidVol = marketDataUpdate.Volume;
+            }
+            else if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Ask)
+            {
+                currentAskVol = marketDataUpdate.Volume;
+            }
             // We only care about Last trades (the Tape)
-            if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Last)
+            else if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Last)
             {
                 if ((DateTime.Now - lastDepthUpdate).TotalMilliseconds < 250)
                     return;
@@ -250,6 +287,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     
                     // Simple side detection logic
                     string side = marketDataUpdate.Price >= GetCurrentAsk() ? "BUY" : "SELL";
+                    string emaValue = (ema15 != null && CurrentBars[1] >= 0) ? ema15[0].ToString("F2") : "null";
                     
                     string json = "{" +
                         "\"LABEL\":\"TRADE\"," +
@@ -257,7 +295,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                         "\"SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
                         "\"SIZE\":" + marketDataUpdate.Volume + "," +
                         "\"PRICE\":" + marketDataUpdate.Price + "," +
-                        "\"SIDE\":\"" + side + "\"" +
+                        "\"SIDE\":\"" + side + "\"," +
+                        "\"bid_vol\":" + currentBidVol + "," +
+                        "\"ask_vol\":" + currentAskVol + "," +
+                        "\"ema_15\":" + emaValue +
                     "}";
 
                     SendDataToPython(json);

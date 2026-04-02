@@ -828,3 +828,67 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
         }
 
     return signal
+
+
+def analyze_stagnation_exit(symbol, current_price, position_data):
+    """
+    Implements a 'Time-Decay' exit logic. If a position is in profit but 
+    stalls and fails to make a new extremum within a dynamic heartbeat threshold,
+    it triggers an exit.
+    """
+    entry_price = position_data.get('entry_price')
+    pos_type = position_data.get('type', '').upper()
+    
+    if not entry_price or not pos_type:
+        return None
+        
+    is_long = 'BUY' in pos_type or 'LONG' in pos_type
+    
+    # 1. Check Profitability: Only trigger if in profit by > 1.5 points
+    profit_points = (current_price - entry_price) if is_long else (entry_price - current_price)
+    if profit_points <= 1.5:
+        # Reset counters if we fall out of the profit zone or haven't reached it
+        position_data['heartbeats_since_new_extremum'] = 0
+        position_data['last_extremum_price'] = current_price
+        return None
+
+    # 2. Track Extremums
+    best_price = position_data.get('last_extremum_price', entry_price)
+    made_new_extremum = False
+    
+    if is_long and current_price > best_price:
+        best_price = current_price
+        made_new_extremum = True
+    elif not is_long and current_price < best_price:
+        best_price = current_price
+        made_new_extremum = True
+        
+    position_data['last_extremum_price'] = best_price
+    
+    # 3. Update Stagnation Timer
+    if made_new_extremum:
+        position_data['heartbeats_since_new_extremum'] = 0
+    else:
+        position_data['heartbeats_since_new_extremum'] = position_data.get('heartbeats_since_new_extremum', 0) + 1
+
+    # 4. Dynamic Threshold based on ATR
+    price_history = state_manager.price_history.get(symbol, [])
+    atr = get_current_atr(price_history) if price_history else 2.0
+    
+    # Base threshold is 30 heartbeats. Adjust inversely proportional to ATR.
+    safe_atr = max(atr, 0.5) # Prevent division by zero
+    dynamic_threshold = int(30 * (2.0 / safe_atr))
+    dynamic_threshold = max(10, min(dynamic_threshold, 60)) # Clamp bounds between 10 and 60
+    
+    if position_data.get('heartbeats_since_new_extremum', 0) >= dynamic_threshold:
+        print(f"[⏱️ TIME-DECAY EXIT] {symbol} position stagnated for {dynamic_threshold} heartbeats. Best price was {best_price}.")
+        return {
+            'symbol': symbol,
+            'type': 'EXIT_SIGNAL',
+            'price': current_price,
+            'size': position_data.get('size', 1.0),
+            'reason': 'Stagnation Decay',
+            'timestamp': round(time.time(), 4)
+        }
+        
+    return None

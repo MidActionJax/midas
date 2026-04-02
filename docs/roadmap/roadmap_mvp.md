@@ -284,3 +284,133 @@ The Brain Upgrade: The Random Forest algorithm will mathematically discover that
 
 Stage 5: Deployment of V2
 You swap the old .pkl files for the new .pkl files, run pm2 restart midas-bot, and you now possess a fully context-aware, multi-timeframe quantitative trading engine.
+
+---
+bash```
+            # ==========================================
+            # --- PHASE 2: INSTITUTIONAL HARD GUARDS ---
+            # ==========================================
+            phase2_pass = True
+            veto_reason = ""
+            
+            # --- GUARD 1: DOM IMBALANCE ---
+            # Calculate the ratio of buyers (Bid) to sellers (Ask) across the entire book
+            safe_ask_vol = max(ask_vol, 0.1) # Prevent division by zero
+            safe_bid_vol = max(bid_vol, 0.1)
+            imbalance_ratio = safe_bid_vol / safe_ask_vol
+            
+            if 'BUY' in signal['type'] and imbalance_ratio < 0.5:
+                # Veto Longs if sellers outweigh buyers 2-to-1 globally
+                phase2_pass = False
+                veto_reason = f"DOM_IMBALANCE (Sellers dominate 1:{1/imbalance_ratio:.1f})"
+                
+            elif 'SELL' in signal['type'] and imbalance_ratio > 2.0:
+                # Veto Shorts if buyers outweigh sellers 2-to-1 globally
+                phase2_pass = False
+                veto_reason = f"DOM_IMBALANCE (Buyers dominate {imbalance_ratio:.1f}:1)"
+
+            # --- GUARD 2: HIGH-SPEED MACRO TREND & RUBBER BAND ---
+            # Check for a fast 15-min EMA from the C# bridge. Defaults to None safely.
+            macro_ema = market_data.get('ema_15', None) 
+            current_price = market_data.get('last_price', 0)
+            
+            # Rubber Band Stretch: How many points price can pull away from the EMA before it must "snap" back
+            rubber_band_stretch = 15.0 
+            
+            if phase2_pass and macro_ema and current_price > 0:
+                distance_from_ema = current_price - macro_ema
+                
+                if 'BUY' in signal['type']:
+                    if current_price < macro_ema:
+                        # Rubber Band Check: Are we so far below the EMA that a snap-back is imminent?
+                        if abs(distance_from_ema) >= rubber_band_stretch:
+                            print(f"0|midas-bot  | [OVERRIDE] Rubber Band Stretched ({abs(distance_from_ema):.2f} pts). Allowing Counter-Trend LONG.")
+                        else:
+                            phase2_pass = False
+                            veto_reason = "MACRO_MISALIGNMENT (15m EMA is Bearish)"
+                            
+                elif 'SELL' in signal['type']:
+                    if current_price > macro_ema:
+                        # Rubber Band Check: Are we so far above the EMA that a crash is imminent?
+                        if abs(distance_from_ema) >= rubber_band_stretch:
+                            print(f"0|midas-bot  | [OVERRIDE] Rubber Band Stretched ({abs(distance_from_ema):.2f} pts). Allowing Counter-Trend SHORT.")
+                        else:
+                            phase2_pass = False
+                            veto_reason = "MACRO_MISALIGNMENT (15m EMA is Bullish)"
+                    
+            # --- EXECUTE PHASE 2 VETO ---
+            if not phase2_pass:
+                print(f"0|midas-bot  | [VETO] Phase 2 Guard Triggered: {veto_reason}")
+                signal['ml_confidence_value'] = 0.0
+                signal['ml_confidence'] = "0.00%"
+
+```
+
+
+Please update the MidasBridge.cs NinjaTrader 8 Indicator to calculate a 15-minute EMA in the background and append it to the live TRADE JSON payload.
+
+Step 1: At the top of the MidasBridge class, add a private variable for the EMA.
+
+C#
+    public class MidasBridge : Indicator
+    {
+        private TcpListener server;
+        // ... existing variables ...
+        private EMA ema15; // <-- ADD THIS
+Step 2: In OnStateChange() under State.Configure, add the 15-minute secondary data series.
+
+C#
+            else if (State == State.Configure)
+            {
+                // Add a 15-minute data series in the background (Index 1)
+                AddDataSeries(BarsPeriodType.Minute, 15);
+                
+                // ... existing account audit code ...
+Step 3: In OnStateChange() under State.DataLoaded, initialize the EMA using the secondary 15-minute series (BarsArray[1]).
+
+C#
+            else if (State == State.DataLoaded)
+            {
+                // Initialize the 15-period EMA on the 15-minute chart
+                ema15 = EMA(BarsArray[1], 15);
+                
+                // ... existing server start code ...
+Step 4: In OnMarketData(), safely extract the EMA value and add it to the JSON string. Replace the entire try block inside the Last market data type check with this:
+
+C#
+                try
+                {
+                    lastChartTime = marketDataUpdate.Time.ToString("o");
+                    string side = marketDataUpdate.Price >= GetCurrentAsk() ? "BUY" : "SELL";
+                    
+                    // Safely get the EMA value if the 15-minute bars have loaded
+                    string emaValue = "null";
+                    if (ema15 != null && CurrentBars[1] >= 0)
+                    {
+                        emaValue = ema15[0].ToString("F2");
+                    }
+                    
+                    string json = "{" +
+                        "\"LABEL\":\"TRADE\"," +
+                        "\"chart_time\":\"" + lastChartTime + "\"," +
+                        "\"SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
+                        "\"SIZE\":" + marketDataUpdate.Volume + "," +
+                        "\"PRICE\":" + marketDataUpdate.Price + "," +
+                        "\"SIDE\":\"" + side + "\"," +
+                        "\"ema_15\":" + emaValue + 
+                    "}";
+
+                    SendDataToPython(json);
+                }
+    
+
+    3. The Titanium Shield & The Market Open
+Regarding your question about the 5-minute open: The Titanium Shield (Phase 2) is designed to be the ultimate guard during high-volatility events like the market open.
+
+Will it block the first 5 minutes? Technically, the shield doesn't just "turn off" the bot for 5 minutes; instead, it makes the bot mathematically blind to signals that are too close to the opening chaos.
+
+The Macro Veto: If a high-confidence signal fires within those first 5 minutes, the Shield (via analyze_order_book) calculates the distance_to_floor or distance_to_ceiling.
+
+The Result: At the open, institutions often stack massive walls (like that 400-lot wall we saw). The Titanium Shield will VETO any trade that is within 1.5 points of those walls, effectively keeping you flat until the "Opening Range" settles and a clear path opens up.
+
+--- CHANGE TO 10 RUBBER BAND
