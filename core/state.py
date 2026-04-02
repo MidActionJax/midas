@@ -43,6 +43,7 @@ class StateManager:
         self.current_market_time = None
         self.session_cvd = 0.0
         self.state_file = state_file
+        self.closed_signals = set()
         self.load_price_history()
 
     def toggle_dev_mode(self):
@@ -176,6 +177,7 @@ class StateManager:
             self.live_wins = 0
             self.live_trades = 0
             self.circuit_breaker_tripped = False
+            self.closed_signals.clear()
 
     def add_pnl(self, amount):
         with self._lock:
@@ -234,6 +236,14 @@ class StateManager:
     def add_trade_to_history(self, trade):
         with self._lock:
             self.trade_history.append(trade)
+
+    def is_signal_closed(self, signal_timestamp):
+        with self._lock:
+            return signal_timestamp in self.closed_signals
+
+    def mark_signal_closed(self, signal_timestamp):
+        with self._lock:
+            self.closed_signals.add(signal_timestamp)
 
     def add_price(self, symbol, price):
         with self._lock:

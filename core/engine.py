@@ -2,6 +2,7 @@ import threading
 import time
 import config
 import os
+import math
 import numpy as np
 import pandas as pd
 from adapters.paper_crypto import PaperCryptoAdapter
@@ -120,6 +121,7 @@ class MidasEngine(threading.Thread):
             live_positions = self.adapter.get_open_positions()
             tracked_positions = state.state_manager.get_active_positions()
             
+            seen_signatures = set()
             for pos in list(tracked_positions):
                 # 🚨 THE GHOST EXORCIST 🚨
                 # The NT adapter pushes raw duplicates ('BUY_SIGNAL') into our memory on every fill.
@@ -127,6 +129,14 @@ class MidasEngine(threading.Thread):
                 if 'SIGNAL' in pos.get('type', '').upper():
                     state.state_manager.remove_position(pos)
                     continue
+
+                # Identify and remove any positions that share the exact same entry_price and signal_timestamp
+                sig = (pos.get('signal_timestamp'), pos.get('entry_price'))
+                if sig in seen_signatures:
+                    print(f"[🛡️ DE-DUP] Blocking ghost position for signal {pos.get('signal_timestamp')}.")
+                    state.state_manager.remove_position(pos)
+                    continue
+                seen_signatures.add(sig)
 
                 pos_symbol = pos.get('symbol', '').upper()
                 raw_type = pos.get('type', 'BUY').upper()
@@ -141,6 +151,10 @@ class MidasEngine(threading.Thread):
                             match = lp
                             break
                         elif pos_type == 'SHORT' and ('SHORT' in lp_string or 'SELL' in lp_string):
+                            match = lp
+                            break
+                        else:
+                            # Aggressive match fallback: If symbol is anywhere in the string, count it.
                             match = lp
                             break
 
@@ -168,37 +182,45 @@ class MidasEngine(threading.Thread):
                         if 'dynamic_sl' not in pos:
                             pos['dynamic_sl'] = -1.0 # STRICT -1.0 POINT STOP LOSS
                             
-                        # --- TASK 2: INSTANT AUTO-BREAKEVEN & TIGHT TRAIL ---
-                        # --- THE RATCHET TRAILING STOP ---
-                        if points_profit >= 1.5 and pos['dynamic_sl'] < 0.5:
-                            pos['dynamic_sl'] = 0.5
-                            print(f"--- RISK FREE: {pos_symbol} SL moved to +0.5 ---")
-                        
-                        elif points_profit >= 3.0 and pos['dynamic_sl'] < 1.5:
-                            pos['dynamic_sl'] = 1.5
-                            print(f"--- PROFIT SECURED: {pos_symbol} SL moved to +1.5 ---")
-                            
-                        elif points_profit >= 5.0:
-                            new_sl = points_profit - 2.0
+                        # --- DIAGNOSTIC HEARTBEAT LOG ---
+                        current_time = time.time()
+                        if current_time - pos.get('last_pnl_log_time', 0) >= 5:
+                            print(f"💓 [HEARTBEAT] {pos_symbol} {pos_type} | Profit: {points_profit:.2f} pts | SL: {pos.get('dynamic_sl', -1.0):.2f}")
+                            pos['last_pnl_log_time'] = current_time
+
+                        # --- TASK 2: STEP-BASED RATCHET ---
+                        # Trigger at 3.0 pts, step up 1.5 pts for every 2.0 pts profit gained
+                        if points_profit >= 3.0:
+                            new_sl = math.floor((points_profit - 3.0) / 2.0) * 1.5 + 1.5
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                print(f"--- RIDING WAVE: {pos_symbol} Trailing SL raised to +{new_sl:.2f} ---")
+                                print(f"--- STEP RATCHET: {pos_symbol} SL moved to +{new_sl} ---")
                                  
                         # Remove the hard ceiling
                         hit_tp = False 
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
+                        # --- EMERGENCY STOP (-2.0 PTS) ---
+                        hit_emergency = points_profit <= -2.0
+
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
                         time_open = time.time() - pos.get('timestamp', time.time())
                         hit_time_kill = time_open >= 45 and points_profit <= 0
                         
-                        if hit_tp or hit_sl or hit_time_kill:
+                        stagnation_signal = logic.analyze_stagnation_exit(pos_symbol, current_price, pos)
+                        
+                        if hit_tp or hit_sl or hit_time_kill or stagnation_signal or hit_emergency:
                             side = 'SELL' if is_long else 'BUY'
                             if hit_tp:
                                 exit_reason = "TAKE PROFIT"
+                            elif hit_emergency:
+                                exit_reason = "EMERGENCY STOP (-2.0 pts)"
+                                print("!!! EMERGENCY STOP: Hard -2.0 point loss limit reached. !!!")
                             elif hit_time_kill:
                                 exit_reason = "45-SECOND EJECT"
                                 print("!!! EJECT: 45-second rule triggered. Trade stagnant/reversing. !!!")
+                            elif stagnation_signal:
+                                exit_reason = "STAGNATION DECAY"
                             else:
                                 exit_reason = "STOP/TRAILING"
                                 
@@ -222,6 +244,12 @@ class MidasEngine(threading.Thread):
                             except Exception as ex:
                                 print(f"Error executing auto-exit: {ex}")
                 else:
+                    # --- MATCH FAIL WARNING ---
+                    current_time = time.time()
+                    if current_time - pos.get('last_match_fail_time', 0) >= 5:
+                        print(f"[⚠️ MATCH FAIL] Tracked {pos_symbol} but NT8 reports {live_positions}")
+                        pos['last_match_fail_time'] = current_time
+
                     # --- BULLETPROOF GRACE PERIOD ---
                     entry_time = pos.get('timestamp', time.time())
                     if time.time() - entry_time < 15:
@@ -231,6 +259,12 @@ class MidasEngine(threading.Thread):
                     sig_id = pos.get('signal_timestamp')
                     
                     if sig_id:
+                        # PnL Protection: Ensure final_pnl is only added once per unique signal_timestamp
+                        if state.state_manager.is_signal_closed(sig_id):
+                            state.state_manager.remove_position(pos)
+                            continue
+                        state.state_manager.mark_signal_closed(sig_id)
+                        
                         logger.log_trade_exit(sig_id, final_pnl, "Exit Detected")
                     
                     # --- FORCE IMMEDIATE APPEND TO CSV ---
@@ -625,7 +659,13 @@ class MidasEngine(threading.Thread):
                                                         'timestamp': time.time(),
                                                         'signal_timestamp': float(signal['timestamp'])
                                                     }
-                                                    state.state_manager.add_position(position)
+                                                    
+                                                    # Deduplication Logic
+                                                    existing_positions = state.state_manager.get_active_positions()
+                                                    if any(str(p.get('signal_timestamp')) == str(position['signal_timestamp']) for p in existing_positions):
+                                                        print(f"[🛡️ DE-DUP] Blocking ghost position for signal {position['signal_timestamp']}.")
+                                                    else:
+                                                        state.state_manager.add_position(position)
                                                     state.state_manager.last_trade_time = current_time
                                                     print(f"✅ AUTO-TRADE EXECUTED: {symbol} at {exec_price} ({pos_type})")
                                             
