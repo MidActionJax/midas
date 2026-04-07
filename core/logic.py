@@ -6,6 +6,7 @@ import joblib
 import os
 import pandas as pd
 import numpy as np
+import uuid
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -159,17 +160,9 @@ def get_market_session():
     Determines the current market session based on EST.
     """
     try:
-        from datetime import datetime, timezone, timedelta, time as datetime_time
-        from zoneinfo import ZoneInfo
+        from datetime import time as datetime_time
         
-        if state_manager.current_market_time:
-            # Assume naive Arizona time (MST) and shift to EST
-            now_est = (state_manager.current_market_time + timedelta(hours=3)).time()
-        else:
-            # Fallback to current UTC and convert to EST
-            utc_now = datetime.now(timezone.utc)
-            est_now = utc_now.astimezone(ZoneInfo('US/Eastern'))
-            now_est = est_now.time()
+        now_est = state_manager.get_current_time().time()
 
         open_end = datetime_time(10, 30)
         trend_est_end = datetime_time(12, 0)
@@ -208,15 +201,9 @@ def get_dynamic_thresholds():
     Maps PST timeblocks to EST.
     """
     try:
-        from datetime import datetime, timezone, timedelta, time as datetime_time
-        est = ZoneInfo('US/Eastern')
+        from datetime import time as datetime_time
         
-        if state_manager.current_market_time:
-            # Assume naive Arizona time (MST) and shift to EST
-            now_est = (state_manager.current_market_time + timedelta(hours=3)).time()
-        else:
-            utc_now = datetime.now(timezone.utc)
-            now_est = datetime.now(est).time()
+        now_est = state_manager.get_current_time().time()
 
         open_end = datetime_time(10, 30)
         trend_est_end = datetime_time(12, 0)
@@ -230,7 +217,9 @@ def get_dynamic_thresholds():
         asian_end = datetime_time(6, 0)
 
         if now_est >= power_hour_end and now_est < halt_end:
-            return {'min_confidence': 100.0, 'halt': True, 'min_atr': 2.0, 'strategy': 'NONE'}
+            if not getattr(state_manager, 'ignore_scheduler', False):
+                return {'min_confidence': 100.0, 'halt': True, 'min_atr': 2.0, 'strategy': 'NONE'}
+            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est >= halt_end or now_est < asian_end:
             return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
 
@@ -313,7 +302,7 @@ def get_current_atr(price_history, period=120):
     # Return the Average True Range of those 30-second blocks
     return sum(ranges) / len(ranges)
 
-def get_dynamic_wall_threshold(order_book, multiplier=4.0, absolute_min=25.0):
+def get_dynamic_wall_threshold(order_book, multiplier=4.0, absolute_min=3.5):
     """
     Calculates what a 'Massive Wall' is right now based on current DOM averages.
     It requires a wall to be 'multiplier' times larger than the average resting order,
@@ -430,10 +419,183 @@ def calculate_position_size(price, price_history, risk_pct=0.01):
         print("WARNING: Account balance is zero or negative. Cannot calculate AUTO position size.")
         return 0 # Return 0 to prevent trades
 
-    # 1 contract per $5,000 of balance
-    contracts = int(balance / 5000)
-    return contracts
+    # Hard limit to 1 contract to prevent runaway scaling during errors
+    # This explicitly honors the user constraint: "i need it to only long or short 1 contract"
+    return 1
 
+
+def calculate_adx(df, period=14):
+    """
+    Calculates Average Directional Index (ADX) using pandas.
+    Requires a DataFrame with 'high', 'low', and 'close' columns.
+    """
+    if len(df) < period * 2 or not all(k in df.columns for k in ['high', 'low', 'close']):
+        return 25.0
+    
+    high = df['high']
+    low = df['low']
+    close = df['close']
+    
+    up_move = high.diff()
+    down_move = low.shift(1) - low
+    
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    atr = tr.ewm(alpha=1/period, min_periods=period).mean()
+    plus_di = 100 * pd.Series(plus_dm).ewm(alpha=1/period, min_periods=period).mean() / atr
+    minus_di = 100 * pd.Series(minus_dm).ewm(alpha=1/period, min_periods=period).mean() / atr
+    
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-10)
+    adx = dx.ewm(alpha=1/period, min_periods=period).mean()
+    
+    val = adx.iloc[-1]
+    return float(val) if not pd.isna(val) else 25.0
+
+
+def update_concrete_state(current_price, current_atr, symbol='MES'):
+    """
+    Updates the Recursive Trailing Fence (Wet Concrete Logic).
+    """
+    if getattr(state_manager, 'time_out_until', None) is not None:
+        if time.time() > state_manager.time_out_until:
+            state_manager.time_out_until = None
+            state_manager.consecutive_losses = 0
+
+    if getattr(state_manager, 'last_dry_price', None) is None:
+        state_manager.last_dry_price = current_price
+        state_manager.is_concrete_wet = False
+        state_manager.current_fence_high = current_price + 1.5
+        state_manager.current_fence_low = current_price - 1.5
+
+    if not hasattr(state_manager, 'session_atr_list'):
+        state_manager.session_atr_list = []
+    state_manager.session_atr_list.append(current_atr)
+
+    # Pre-Flight Regime Check
+    bars = state_manager.price_bars.get(symbol, [])
+    adx = getattr(state_manager, 'mock_adx', 25.0)
+    if len(bars) >= 28 and not hasattr(state_manager, 'mock_adx'):
+        df = pd.DataFrame(bars)
+        adx = calculate_adx(df)
+        
+    sibling_sync_pass = False
+    mnq_hist = state_manager.price_history.get('MNQ', [])
+    mes_hist = state_manager.price_history.get('MES', [])
+    if len(mnq_hist) >= 180 and len(mes_hist) >= 180:
+        mnq_3m_ago = mnq_hist[-180]
+        mnq_now = mnq_hist[-1]
+        mnq_diff = mnq_now - mnq_3m_ago
+        
+        mes_3m_ago = mes_hist[-180]
+        mes_now = current_price
+        mes_diff = mes_now - mes_3m_ago
+        
+        if (mes_diff > 0 and mnq_diff >= 5.0) or (mes_diff < 0 and mnq_diff <= -5.0):
+            sibling_sync_pass = True
+    else:
+        sibling_sync_pass = True
+        
+    if adx < 20.0:
+        if getattr(state_manager, 'is_concrete_wet', False):
+            print(f"[🛡️ REGIME] Low Trend Strength (ADX: {adx:.1f}). Expansion Disabled.")
+        with state_manager._lock:
+            state_manager.is_concrete_wet = False
+
+    current_fence_high = getattr(state_manager, 'current_fence_high', None)
+    if current_fence_high is None and getattr(state_manager, 'last_dry_price', None) is not None:
+        current_fence_high = state_manager.last_dry_price + 1.5
+        
+    current_fence_low = getattr(state_manager, 'current_fence_low', None)
+    if current_fence_low is None and getattr(state_manager, 'last_dry_price', None) is not None:
+        current_fence_low = state_manager.last_dry_price - 1.5
+
+    shatter_macro = False
+    shatter_local = False
+
+    or_high = getattr(state_manager, 'opening_range_high', None)
+    or_low = getattr(state_manager, 'opening_range_low', None)
+    if or_high is not None and or_low is not None:
+        if current_price > or_high + 15.0 or current_price < or_low - 15.0:
+            shatter_macro = True
+
+    if len(bars) > 0:
+        last_close = bars[-1]['close']
+        if current_fence_high is not None and current_fence_low is not None:
+            if last_close > current_fence_high or last_close < current_fence_low:
+                shatter_local = True
+
+    if shatter_macro or shatter_local:
+        with state_manager._lock:
+            state_manager.is_concrete_wet = True
+        # Safety Fix: Only reset to None if we are actively shattering on THIS tick
+        if not getattr(state_manager, 'fence_shattered', False):
+             state_manager.stagnation_max_price = None
+             state_manager.stagnation_min_price = None
+             state_manager.stagnation_start_time = None
+        
+    if shatter_macro:
+        with state_manager._lock:
+            state_manager.fence_shattered = True
+
+    if getattr(state_manager, 'is_concrete_wet', False):
+        # SURGICAL FIX: Force a rebuild if ANY of the three variables are missing
+        if getattr(state_manager, 'stagnation_start_time', None) is None or \
+           getattr(state_manager, 'stagnation_min_price', None) is None or \
+           getattr(state_manager, 'stagnation_max_price', None) is None:
+            
+            state_manager.stagnation_start_time = time.time()
+            state_manager.stagnation_min_price = current_price
+            state_manager.stagnation_max_price = current_price
+        else:
+            state_manager.stagnation_min_price = min(state_manager.stagnation_min_price, current_price)
+            state_manager.stagnation_max_price = max(state_manager.stagnation_max_price, current_price)
+            
+            range_width = state_manager.stagnation_max_price - state_manager.stagnation_min_price
+            time_stagnant = time.time() - state_manager.stagnation_start_time
+            
+            session_atr_avg = sum(state_manager.session_atr_list) / len(state_manager.session_atr_list) if getattr(state_manager, 'session_atr_list', []) else current_atr
+            
+            if range_width > 2.5:
+                state_manager.stagnation_start_time = time.time()
+                state_manager.stagnation_min_price = current_price
+                state_manager.stagnation_max_price = current_price
+            elif time_stagnant > 300 and current_atr < session_atr_avg:
+                with state_manager._lock:
+                    state_manager.is_concrete_wet = False
+                state_manager.last_dry_price = current_price
+                state_manager.current_fence_high = current_price + 1.5
+                state_manager.current_fence_low = current_price - 1.5
+                state_manager.stagnation_start_time = None
+                state_manager.stagnation_min_price = None
+                state_manager.stagnation_max_price = None
+            elif time_stagnant >= 600:
+                with state_manager._lock:
+                    state_manager.is_concrete_wet = False
+                state_manager.last_dry_price = current_price
+                state_manager.current_fence_high = current_price + 1.5
+                state_manager.current_fence_low = current_price - 1.5
+                state_manager.stagnation_start_time = None
+                state_manager.stagnation_min_price = None
+                state_manager.stagnation_max_price = None
+
+def update_session_anchors(current_price, current_session):
+    """Updates the Opening Range and Session Extrema based on the current market session."""
+    if current_session == "The Open":
+        if state_manager.opening_range_high is None or current_price > state_manager.opening_range_high:
+            state_manager.opening_range_high = current_price
+        if state_manager.opening_range_low is None or current_price < state_manager.opening_range_low:
+            state_manager.opening_range_low = current_price
+            
+    if state_manager.session_high is None or current_price > state_manager.session_high:
+        state_manager.session_high = current_price
+    if state_manager.session_low is None or current_price < state_manager.session_low:
+        state_manager.session_low = current_price
 
 def analyze_order_book(symbol, order_book, price_history_map, adapter=None, threshold=0.5):
     if not order_book:
@@ -444,12 +606,12 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
     if 'bids' in order_book and order_book['bids']:
         for price, size in order_book['bids']:
             if float(size) > threshold:
-                signal = {'symbol': symbol, 'type': 'BUY_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
+                signal = {'id': str(uuid.uuid4()), 'symbol': symbol, 'type': 'BUY_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
                 break
     if not signal and 'asks' in order_book and order_book['asks']:
         for price, size in order_book['asks']:
             if float(size) > threshold:
-                signal = {'symbol': symbol, 'type': 'SELL_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
+                signal = {'id': str(uuid.uuid4()), 'symbol': symbol, 'type': 'SELL_SIGNAL', 'price': price, 'size': float(size), 'reason': 'Iceberg Detected', 'timestamp': round(time.time(), 4)}
                 break
     
     if symbol != 'MES':
@@ -478,6 +640,9 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
     current_price_mes = price_history_mes[-1]
     ema_mes = calculate_ema(price_history_mes, period=5) # Warmup/Testing period
     
+    current_session = get_market_session()
+    update_session_anchors(current_price_mes, current_session)
+    
     if ema_mes is None:
         return None
 
@@ -487,6 +652,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
     
     # --- THE 4TH KEY: Volatility Gate ---
     atr_mes = get_current_atr(price_history_mes)
+    update_concrete_state(current_price_mes, atr_mes)
     thresholds = get_dynamic_thresholds()
     min_atr = thresholds.get('min_atr', 2.0) if isinstance(thresholds, dict) else 2.0
     
@@ -620,6 +786,8 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 distance_to_floor = current_price_mes - macro_floor_price
                 distance_to_ceiling = macro_ceiling_price - current_price_mes
                 
+                print(f'[🛡️ SHIELD ACTIVE] Checking wall strength: {macro_floor_vol} vs threshold {dynamic_wall}')
+
                 # LAYER 1 RULE: Do not shoot into an iceberg wall!
                 if active_brain == 'SHORT' and distance_to_floor <= 1.5 and macro_floor_vol >= dynamic_wall:
                     print(f"[🛑 MACRO VETO] SHORT Blocked! Price ({current_price_mes}) is aiming at a {macro_floor_vol}-contract FLOOR wall at {macro_floor_price} (Threshold: {dynamic_wall:.1f}).")
@@ -631,6 +799,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                     # Path is clear! Build the signal.
                     signal_type = 'BUY_SIGNAL' if active_brain == 'LONG' else 'SELL_SIGNAL'
                     signal = {
+                        'id': str(uuid.uuid4()),
                         'symbol': symbol,
                         'type': signal_type,
                         'price': best_ask if signal_type == 'BUY_SIGNAL' else best_bid,
@@ -655,6 +824,97 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                 signal['ml_confidence'] = f"{ml_score_pct:.2f}%"
                 # 🛡️ IMMUNITY: If the Sniper fired, pass the raw score.
                 signal['ml_confidence_value'] = ml_score_pct
+
+                # ==========================================
+                # --- PHASE 2: INSTITUTIONAL HARD GUARDS ---
+                # ==========================================
+                phase2_pass = True
+                veto_reason = ""
+                
+                if not getattr(state_manager, 'is_concrete_wet', False):
+                    # --- GUARD 1: DOM IMBALANCE ---
+                    # Calculate the ratio of buyers (Bid) to sellers (Ask) across the entire book
+                    safe_ask_vol = max(ask_vol, 0.1) # Prevent division by zero
+                    safe_bid_vol = max(bid_vol, 0.1)
+                    imbalance_ratio = safe_bid_vol / safe_ask_vol
+                    
+                    if 'BUY' in signal['type'] and imbalance_ratio < 0.5:
+                        # Veto Longs if sellers outweigh buyers 2-to-1 globally
+                        phase2_pass = False
+                        veto_reason = f"DOM_IMBALANCE (Sellers dominate 1:{1/imbalance_ratio:.1f})"
+                        
+                    elif 'SELL' in signal['type'] and imbalance_ratio > 2.0:
+                        # Veto Shorts if buyers outweigh sellers 2-to-1 globally
+                        phase2_pass = False
+                        veto_reason = f"DOM_IMBALANCE (Buyers dominate {imbalance_ratio:.1f}:1)"
+
+                    # --- GUARD 2: HIGH-SPEED MACRO TREND & RUBBER BAND ---
+                    # Check for a fast 15-min EMA from the C# bridge. Defaults to None safely.
+                    macro_ema = order_book.get('ema_15', None) 
+                    current_price = current_price_mes
+                    
+                    # Rubber Band Stretch: How many points price can pull away from the EMA before it must "snap" back
+                    rubber_band_stretch = 10.0 
+                    is_rubber_band_trade = False
+                    
+                    if macro_ema and current_price > 0 and abs(current_price - macro_ema) >= rubber_band_stretch:
+                        is_rubber_band_trade = True
+                    
+                    if phase2_pass and macro_ema and current_price > 0:
+                        distance_from_ema = current_price - macro_ema
+                        
+                        if 'BUY' in signal['type'] and current_price < macro_ema:
+                            # Rubber Band Check: Are we so far below the EMA that a snap-back is imminent?
+                            if not is_rubber_band_trade:
+                                phase2_pass = False
+                                veto_reason = "MACRO_MISALIGNMENT (15m EMA is Bearish)"
+                                    
+                        elif 'SELL' in signal['type'] and current_price > macro_ema:
+                            # Rubber Band Check: Are we so far above the EMA that a crash is imminent?
+                            if not is_rubber_band_trade:
+                                phase2_pass = False
+                                veto_reason = "MACRO_MISALIGNMENT (15m EMA is Bullish)"
+                                
+                    # --- GUARD 3: MACRO FENCE (THE TABLE SCRAP VETO) ---
+                    or_high = getattr(state_manager, 'opening_range_high', None)
+                    or_low = getattr(state_manager, 'opening_range_low', None)
+                    
+                    if phase2_pass and not is_rubber_band_trade:
+                        # Protection Mode: Enforce local fence (+- 1.5 points)
+                        last_dry = getattr(state_manager, 'last_dry_price', None)
+                        if last_dry is not None:
+                            if abs(current_price - last_dry) <= 1.5:
+                                phase2_pass = False
+                                veto_reason = "[🛡️ STATIC] Concrete is Dry - Consolidation Phase."
+                                
+                        # Only apply ORB logic if _
+                            highest_seen = getattr(state_manager, 'highest_price_seen', None)
+                            lowest_seen = getattr(state_manager, 'lowest_price_seen', None)
+                            
+                            if not getattr(state_manager, 'fence_shattered', False):
+                                if highest_seen is not None and (highest_seen - or_high) > 15.0:
+                                    state_manager.fence_shattered = True
+                                    print("[🚀 ESCAPE VELOCITY] Bullish ORB Fence shattered!")
+                                elif lowest_seen is not None and (or_low - lowest_seen) > 15.0:
+                                    state_manager.fence_shattered = True
+                                    print("[🚀 ESCAPE VELOCITY] Bearish ORB Fence shattered!")
+                            
+                            if not getattr(state_manager, 'fence_shattered', False):
+                                range_width = or_high - or_low
+                                if range_width <= 20.0:
+                                    if current_session not in ["Pre-Market", "The Open"]:
+                                        if 'BUY' in signal['type'] and current_price < or_high:
+                                            phase2_pass = False
+                                            veto_reason = "[🛡️ MACRO] Waiting for Opening Range Breakout.."
+                                        elif 'SELL' in signal['type'] and current_price > or_low:
+                                            phase2_pass = False
+                                            veto_reason = "[🛡️ MACRO] Waiting for Opening Range Breakdown.."
+                        
+                # --- EXECUTE PHASE 2 VETO ---
+                if not phase2_pass:
+                    print(f"[VETO] Phase 2 Guard Triggered: {veto_reason}")
+                    signal['ml_confidence_value'] = 0.0
+                    signal['ml_confidence'] = "0.00%"
 
     print(f"[X-RAY - {active_brain} BRAIN] ATR: {atr_mes:.2f} | ML Confidence: {ml_score_pct:.2f}% | Trend: {trend_alignment:.2f}")
 
@@ -740,6 +1000,7 @@ def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
     if dist_to_floor <= 1.0 and floor_vol >= dynamic_wall and current_price < sma_60:
         print(f"[🏓 PING-PONG] Floor bounce detected at {floor_price}. Aiming for SMA 60 ({sma_60:.2f})")
         signal = {
+            'id': str(uuid.uuid4()),
             'symbol': symbol,
             'type': 'BUY_SIGNAL',
             'price': current_price,
@@ -757,6 +1018,7 @@ def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
     elif dist_to_ceiling <= 1.0 and ceiling_vol >= dynamic_wall and current_price > sma_60:
         print(f"[🏓 PING-PONG] Ceiling rejection detected at {ceiling_price}. Aiming for SMA 60 ({sma_60:.2f})")
         signal = {
+            'id': str(uuid.uuid4()),
             'symbol': symbol,
             'type': 'SELL_SIGNAL',
             'signal_direction': 'SHORT',
@@ -806,6 +1068,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
 
     if current_price > (ema_5 + (1.0 * atr)):
         signal = {
+            'id': str(uuid.uuid4()),
             'symbol': symbol,
             'type': 'BUY_SIGNAL',
             'price': current_price,
@@ -817,6 +1080,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
         }
     elif current_price < (ema_5 - (1.0 * atr)):
         signal = {
+            'id': str(uuid.uuid4()),
             'symbol': symbol,
             'type': 'SELL_SIGNAL',
             'price': current_price,
@@ -844,14 +1108,6 @@ def analyze_stagnation_exit(symbol, current_price, position_data):
         
     is_long = 'BUY' in pos_type or 'LONG' in pos_type
     
-    # 1. Check Profitability: Only trigger if in profit by > 1.5 points
-    profit_points = (current_price - entry_price) if is_long else (entry_price - current_price)
-    if profit_points <= 1.5:
-        # Reset counters if we fall out of the profit zone or haven't reached it
-        position_data['heartbeats_since_new_extremum'] = 0
-        position_data['last_extremum_price'] = current_price
-        return None
-
     # 2. Track Extremums
     best_price = position_data.get('last_extremum_price', entry_price)
     made_new_extremum = False
@@ -866,23 +1122,24 @@ def analyze_stagnation_exit(symbol, current_price, position_data):
     position_data['last_extremum_price'] = best_price
     
     # 3. Update Stagnation Timer
-    if made_new_extremum:
-        position_data['heartbeats_since_new_extremum'] = 0
-    else:
-        position_data['heartbeats_since_new_extremum'] = position_data.get('heartbeats_since_new_extremum', 0) + 1
+    if made_new_extremum or 'last_extremum_timestamp' not in position_data:
+        position_data['last_extremum_timestamp'] = time.time()
+
+    elapsed_seconds = time.time() - position_data['last_extremum_timestamp']
 
     # 4. Dynamic Threshold based on ATR
     price_history = state_manager.price_history.get(symbol, [])
     atr = get_current_atr(price_history) if price_history else 2.0
     
-    # Base threshold is 30 heartbeats. Adjust inversely proportional to ATR.
+    # Base threshold is 75 heartbeats. Adjust inversely proportional to ATR.
     safe_atr = max(atr, 0.5) # Prevent division by zero
-    dynamic_threshold = int(30 * (2.0 / safe_atr))
-    dynamic_threshold = max(10, min(dynamic_threshold, 60)) # Clamp bounds between 10 and 60
+    dynamic_threshold = int(75 * (2.0 / safe_atr))
+    dynamic_threshold = max(25, min(dynamic_threshold, 150)) # Clamp bounds between 25 and 150
     
-    if position_data.get('heartbeats_since_new_extremum', 0) >= dynamic_threshold:
-        print(f"[⏱️ TIME-DECAY EXIT] {symbol} position stagnated for {dynamic_threshold} heartbeats. Best price was {best_price}.")
+    if elapsed_seconds >= dynamic_threshold:
+        # Suppress constant printing by letting engine.py log it on execution
         return {
+            'id': str(uuid.uuid4()),
             'symbol': symbol,
             'type': 'EXIT_SIGNAL',
             'price': current_price,

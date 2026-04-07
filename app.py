@@ -14,6 +14,7 @@ import numpy as np
 import threading
 from models.rl_agent import retrain_agent
 import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 load_dotenv()
@@ -233,6 +234,7 @@ def status():
         'execution_log': execution_log,
         'dev_mode': state.state_manager.dev_mode,
         'auto_buy_enabled': state.state_manager.auto_buy_enabled,
+        'ignore_scheduler': getattr(state.state_manager, 'ignore_scheduler', False),
         'chop_index': state.state_manager.current_chop_index,
         'correlation_score': correlation_score,
         'pnl_labels': pnl_labels,
@@ -349,6 +351,13 @@ def toggle_auto_buy():
     new_mode = state.state_manager.toggle_auto_buy()
     return jsonify({'status': 'success', 'auto_buy_enabled': new_mode})
 
+@app.route('/api/toggle_scheduler', methods=['POST'])
+@login_required
+def toggle_scheduler():
+    """Toggles the scheduler override mode."""
+    state.state_manager.ignore_scheduler = not getattr(state.state_manager, 'ignore_scheduler', False)
+    return jsonify({'status': 'success', 'ignore_scheduler': state.state_manager.ignore_scheduler})
+
 @app.route('/approve_signal/<string:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):
@@ -360,7 +369,7 @@ def approve_signal(signal_id):
 
     signal_to_execute = None
     for signal in state.state_manager.get_pending_signals():
-        if str(signal['timestamp']) == signal_id:
+        if signal.get('id') == signal_id or str(signal['timestamp']) == signal_id:
             signal_to_execute = signal
             break
     
@@ -396,8 +405,10 @@ def approve_signal(signal_id):
                 return jsonify({'status': 'error', 'message': 'Hard Guard: Already Long. Blocked.'}), 400
             elif current_pos < 0:
                 print(f"--- REVERSAL: Flattening Short {abs(current_pos)} before Long Entry ---")
+                state.state_manager.is_reversing = True
+                state.state_manager.reversal_start_time = time.time()
                 adapter.execute_buy(config.TRADING_SYMBOL, abs(current_pos), exec_price, signal_id='REVERSAL')
-                time.sleep(0.5)
+                return jsonify({'status': 'success', 'message': 'Reversal initiated. Signal queued.'})
 
             trade_executed = adapter.execute_buy(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
             
@@ -410,7 +421,8 @@ def approve_signal(signal_id):
                     # FIX: Start a fresh timer for the Grace Period
                     'timestamp': time.time(), 
                     # Keep the original ID for the CSV Logger
-                    'signal_timestamp': float(signal_id)
+                    'signal_timestamp': float(signal_to_execute['timestamp']),
+                    'signal_id': signal_to_execute.get('id', '')
                 }
                 state.state_manager.add_position(position)
 
@@ -419,8 +431,10 @@ def approve_signal(signal_id):
                 return jsonify({'status': 'error', 'message': 'Hard Guard: Already Short. Blocked.'}), 400
             elif current_pos > 0:
                 print(f"--- REVERSAL: Flattening Long {current_pos} before Short Entry ---")
+                state.state_manager.is_reversing = True
+                state.state_manager.reversal_start_time = time.time()
                 adapter.execute_sell(config.TRADING_SYMBOL, current_pos, exec_price, signal_id='REVERSAL')
-                time.sleep(0.5)
+                return jsonify({'status': 'success', 'message': 'Reversal initiated. Signal queued.'})
 
             trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
             
@@ -433,7 +447,8 @@ def approve_signal(signal_id):
                     # FIX: Start a fresh timer for the Grace Period
                     'timestamp': time.time(), 
                     # Keep the original ID for the CSV Logger
-                    'signal_timestamp': float(signal_id)
+                    'signal_timestamp': float(signal_to_execute['timestamp']),
+                    'signal_id': signal_to_execute.get('id', '')
                 }
                 state.state_manager.add_position(position)
 
@@ -583,6 +598,18 @@ def evolution_loop():
         except Exception as e:
             print(f"Error during evolution loop: {e}")
 
+def scheduled_morning_start():
+    print("[📅 SCHEDULER] Bot started and Auto-Trade ENABLED for market open.")
+    state.state_manager.auto_buy_enabled = True
+    core.engine.start_engine()
+
+def scheduled_evening_stop():
+    if getattr(state.state_manager, 'ignore_scheduler', False):
+        print("[📅 SCHEDULER] Override active. Bypassing evening stop.")
+        return
+    print("[📅 SCHEDULER] Market closed. Bot stopped for the day.")
+    core.engine.stop_engine()
+
 from waitress import serve
 if __name__ == '__main__':
     if not os.environ.get('SECRET_KEY') or not os.environ.get('DASHBOARD_PASSWORD'):
@@ -591,7 +618,12 @@ if __name__ == '__main__':
         # Start the Evolution Loop background task
         threading.Thread(target=evolution_loop, daemon=True).start()
         
-        # Start the Midas Engine in a separate thread
-        core.engine.start_engine()
+        # Start Daily Scheduler
+        scheduler = BackgroundScheduler(timezone='US/Arizona')
+        scheduler.add_job(scheduled_morning_start, 'cron', day_of_week='mon-fri', hour=6, minute=0)
+        scheduler.add_job(scheduled_evening_stop, 'cron', day_of_week='mon-fri', hour=11, minute=7)
+        scheduler.add_job(lambda: print('[⏱️ SCHEDULER] Heartbeat check...'), 'interval', minutes=1)
+        scheduler.start()
+
         # Now, run the Flask app with Waitress
         serve(app, host='0.0.0.0', port=5000)

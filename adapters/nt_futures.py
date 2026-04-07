@@ -102,12 +102,16 @@ class NTFuturesAdapter:
                                     
                                     # Sync state.active_positions if flat
                                     if pos_qty == 0:
-                                        for pos in list(state_manager.get_active_positions()):
-                                            if pos.get('symbol') == pos_symbol:
-                                                state_manager.remove_position(pos)
+                                        state_manager.is_reversing = False
 
                             # --- NEW TAPE SCANNER LOGIC ---
                             elif label == 'TRADE':
+                                # 1. Extract Symbol First
+                                symbol = message.get('SYMBOL')
+                                # 2. Save EMA to a Symbol-Specific Key
+                                ema_val = message.get('ema_15')
+                                if ema_val is not None and str(ema_val) != "null" and symbol:
+                                    self.current_features[f'ema_15_{symbol.lower()}'] = float(ema_val)
                                 if self.scanner:
                                     symbol = message.get('SYMBOL')
                                     size = message.get('SIZE')
@@ -118,15 +122,28 @@ class NTFuturesAdapter:
                             # --- NEW RETURN PATH FOR FILLS ---
                             elif label == 'ORDER_FILL':
                                 print(f"--- ORDER FILL RECEIVED: {message} ---")
-                                position_data = {
-                                    'symbol': message.get('SYMBOL'),
-                                    'quantity': message.get('QUANTITY'),
-                                    'entry_price': message.get('PRICE'),
-                                    'type': f"{message.get('SIDE').upper()}_SIGNAL",
-                                    'signal_timestamp': time.time()
-                                }
-                                state_manager.add_position(position_data)
-                                print(f"--- ACTIVE POSITION UPDATED: {position_data['symbol']} ---")
+                                
+                                # --- FAST SYNC LIVE POSITIONS ---
+                                sym = message.get('SYMBOL')
+                                side = message.get('SIDE', '').upper()
+                                qty = int(message.get('QUANTITY', 1))
+                                fill_price = message.get('PRICE')
+                                
+                                # Update the tracked position's true entry price
+                                if sym:
+                                    if fill_price:
+                                        tracked_positions = state_manager.get_active_positions()
+                                        for p in tracked_positions:
+                                            if p.get('symbol') == sym and not p.get('exit_triggered'):
+                                                p_type = p.get('type', '').upper()
+                                                is_long = 'BUY' in p_type or 'LONG' in p_type
+                                                is_short = 'SELL' in p_type or 'SHORT' in p_type
+                                                if (side == 'BUY' and is_long) or (side == 'SELL' and is_short):
+                                                    p['entry_price'] = float(fill_price)
+                                                    print(f"--- ACTUAL FILL PRICE UPDATED TO {fill_price} FOR {sym} ---")
+                                                    break
+                                                    
+                                print(f"--- ACTIVE POSITION UPDATED: {sym} ---")
                     except json.JSONDecodeError:
                         pass
                     finally:
