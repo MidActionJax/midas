@@ -11,7 +11,8 @@ CSV_FILE = os.path.join(PROJECT_ROOT, 'trade_history.csv')
 CSV_HEADER = [
     'timestamp_id', 'symbol', 'type', 'price', 'size',
     'ema_200_val', 'trend_dir', 'atr_volatility', 'session_context', 'whale_strength',
-    'ml_confidence', 'Whale_ID', 'user_decision', 'final_pnl', 'outcome_label', 'exit_reason'
+    'ml_confidence', 'Whale_ID', 'user_decision', 'final_pnl', 'outcome_label', 'exit_reason',
+    'signal_id'
 ]
 
 def log_signal(signal_data, context_data, status):
@@ -27,6 +28,7 @@ def log_signal(signal_data, context_data, status):
         timestamp_id = round(time.time(), 4) # Fallback, though should always be provided.
 
     row_data = {
+        'signal_id': signal_data.get('id', ''),
         'timestamp_id': timestamp_id,
         'symbol': signal_data.get('symbol'),
         'type': signal_data.get('type'),
@@ -54,7 +56,7 @@ def log_signal(signal_data, context_data, status):
     except IOError as e:
         print(f"Error writing to CSV file {CSV_FILE}: {e}")
 
-def update_user_decision(timestamp_id, decision):
+def update_user_decision(signal_id, decision):
     """
     Finds a signal by its timestamp_id in the CSV and updates the user_decision.
     Includes a retry loop to handle potential race conditions with file writing.
@@ -73,20 +75,12 @@ def update_user_decision(timestamp_id, decision):
                 writer.writeheader()
                 
                 for row in reader:
-                    # 1. Use .get() to avoid KeyError if the column is named wrong
-                    csv_id = row.get('timestamp_id') or row.get('timestamp')
-                    
-                    if csv_id:
-                        try:
-                            # 2. Force both to strings of the same precision for a perfect match
-                            if str(round(float(csv_id), 4)) == str(round(float(timestamp_id), 4)):
-                                row['user_decision'] = decision.upper()
-                                found = True
-                                print(f"--- MATCH FOUND: {csv_id} updated to {decision} ---")
-                        except ValueError:
-                            pass # Skip rows with non-numeric IDs
-                    
-                    # 3. Clean the row before writing (strips out 'action', 'reason', etc.)
+                    csv_id = row.get('signal_id') or row.get('timestamp_id') or row.get('timestamp')
+                    if csv_id and str(csv_id) == str(signal_id):
+                        row['user_decision'] = decision.upper()
+                        found = True
+                        print(f"--- MATCH FOUND: {csv_id} updated to {decision} ---")
+
                     filtered_row = {k: v for k, v in row.items() if k in CSV_HEADER}
                     writer.writerow(filtered_row)
             
@@ -111,9 +105,9 @@ def update_user_decision(timestamp_id, decision):
         time.sleep(0.1)
 
     # This message is now printed only after all retries have failed
-    print(f"Warning: Signal with timestamp_id {timestamp_id} not found for update after multiple attempts.")
+    print(f"Warning: Signal with ID {signal_id} not found for update after multiple attempts.")
 
-def update_outcome(timestamp_id, pnl):
+def update_outcome(signal_id, pnl):
     """
     Finds a signal by its timestamp_id and updates the trade outcome.
     Includes a retry loop to handle potential race conditions with file writing.
@@ -132,14 +126,11 @@ def update_outcome(timestamp_id, pnl):
                 writer.writeheader()
 
                 for row in reader:
-                    print(f"DEBUG: Checking CSV ID {row['timestamp_id']} against target {timestamp_id}")
-                    try:
-                        if str(round(float(row['timestamp_id']), 4)) == str(round(float(timestamp_id), 4)):
-                            row['final_pnl'] = pnl
-                            row['outcome_label'] = 1 if pnl > 0 else 0
-                            found = True
-                    except (ValueError, KeyError):
-                        pass
+                    csv_id = row.get('signal_id') or row.get('timestamp_id') or row.get('timestamp')
+                    if csv_id and str(csv_id) == str(signal_id):
+                        row['final_pnl'] = pnl
+                        row['outcome_label'] = 1 if pnl > 0 else 0
+                        found = True
                     
                     filtered_row = {k: v for k, v in row.items() if k in CSV_HEADER}
                     writer.writerow(filtered_row)
@@ -161,9 +152,9 @@ def update_outcome(timestamp_id, pnl):
 
         time.sleep(0.1)
 
-    print(f"Warning: Signal with timestamp_id {timestamp_id} not found for outcome update after multiple attempts.")
+    print(f"Warning: Signal with ID {signal_id} not found for outcome update after multiple attempts.")
 
-def log_trade_exit(timestamp_id, pnl, reason):
+def log_trade_exit(signal_id, pnl, reason):
     """
     Finds a trade by its signal timestamp_id and updates its exit information.
     """
@@ -182,21 +173,18 @@ def log_trade_exit(timestamp_id, pnl, reason):
                 writer.writeheader()
 
                 for row in reader:
-                    try:
-                        # Match by comparing float representations to handle precision issues
-                        if 'timestamp_id' in row and row['timestamp_id'] and str(round(float(row['timestamp_id']), 4)) == str(round(float(timestamp_id), 4)):
-                            row['final_pnl'] = pnl
-                            row['outcome_label'] = 'WIN' if pnl > 0 else 'LOSS'
-                            row['exit_reason'] = reason
-                            found = True
-                    except (ValueError, TypeError):
-                        pass # Ignore rows where timestamp_id is not a valid float
+                    csv_id = row.get('signal_id') or row.get('timestamp_id')
+                    if csv_id and str(csv_id) == str(signal_id):
+                        row['final_pnl'] = pnl
+                        row['outcome_label'] = 'WIN' if pnl > 0 else 'LOSS'
+                        row['exit_reason'] = reason
+                        found = True
 
                     writer.writerow(row)
             
             if found:
                 shutil.move(tempfile.name, CSV_FILE)
-                print(f"--- EXIT LOGGED: ID={timestamp_id}, PnL={pnl}, Reason={reason} ---")
+                print(f"--- EXIT LOGGED: ID={signal_id}, PnL={pnl}, Reason={reason} ---")
                 return
 
         except FileNotFoundError:
@@ -212,4 +200,4 @@ def log_trade_exit(timestamp_id, pnl, reason):
 
         time.sleep(0.1)
 
-    print(f"Warning: Signal with timestamp_id {timestamp_id} not found for exit logging after multiple attempts.")
+    print(f"Warning: Signal with ID {signal_id} not found for exit logging after multiple attempts.")

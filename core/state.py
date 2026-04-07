@@ -3,6 +3,10 @@ import json
 import os
 import time
 import pandas as pd
+from collections import deque
+from datetime import datetime
+import warnings
+warnings.filterwarnings("ignore", message="Discarding nonzero nanoseconds")
 
 class StateManager:
     """
@@ -10,7 +14,7 @@ class StateManager:
     Uses a thread-safe lock to prevent race conditions.
     """
     def __init__(self, state_file='ema_state.json'):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.market_data = {}
         self.pending_signals = []
         self.active_positions = []
@@ -24,6 +28,8 @@ class StateManager:
         self.whale_last_seen = {}
         self.active_dominant_whales = []
         self.daily_drawdown_limit = -500.0
+        self.is_reversing = False
+        self.reversal_start_time = None
         # New account state fields
         self.account_balance = 0.0
         self.daily_pnl = 0.0
@@ -44,6 +50,25 @@ class StateManager:
         self.session_cvd = 0.0
         self.state_file = state_file
         self.closed_signals = set()
+        self.opening_range_high = None
+        self.opening_range_low = None
+        self.session_high = None
+        self.session_low = None
+        self.highest_price_seen = None
+        self.lowest_price_seen = None
+        self.fence_shattered = False
+        self.is_concrete_wet = False
+        self.last_dry_price = None
+        self.stagnation_start_time = None
+        self.stagnation_min_price = None
+        self.stagnation_max_price = None
+        self.consecutive_losses = 0
+        self.time_out_until = None
+        self.current_fence_high = None
+        self.current_fence_low = None
+        self.ignore_scheduler = False
+        self.log_rolling_buffer = deque(maxlen=1000)
+        self.active_trade_logs = {}
         self.load_price_history()
 
     def toggle_dev_mode(self):
@@ -131,6 +156,24 @@ class StateManager:
         with self._lock:
             return list(self.pending_signals)
 
+    def cleanup_pending_signals(self):
+        with self._lock:
+            current_time = time.time()
+            self.pending_signals = [s for s in self.pending_signals if current_time - s.get('timestamp', current_time) <= 60.0]
+
+    def get_current_time(self):
+        from datetime import datetime, timezone, timedelta
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            from backports.zoneinfo import ZoneInfo
+            
+        if self.current_market_time:
+            return self.current_market_time + timedelta(hours=3)
+        else:
+            utc_now = datetime.now(timezone.utc)
+            return utc_now.astimezone(ZoneInfo('US/Eastern'))
+
     def remove_pending_signal(self, signal_to_remove):
         with self._lock:
             # Rebuilding list without the removed signal
@@ -168,6 +211,17 @@ class StateManager:
     def reset_cvd(self):
         with self._lock:
             self.session_cvd = 0.0
+            
+    def reset_daily_anchors(self):
+        """Clears the daily anchor values at the start of 'The Open' (9:30 AM EST)."""
+        with self._lock:
+            self.opening_range_high = None
+            self.opening_range_low = None
+            self.session_high = None
+            self.session_low = None
+            self.highest_price_seen = None
+            self.lowest_price_seen = None
+            self.fence_shattered = False
 
     def reset_for_new_day(self):
         """Resets daily tracking variables for a new trading session."""
@@ -178,6 +232,8 @@ class StateManager:
             self.live_trades = 0
             self.circuit_breaker_tripped = False
             self.closed_signals.clear()
+            self.consecutive_losses = 0
+            self.time_out_until = None
 
     def add_pnl(self, amount):
         with self._lock:
@@ -250,7 +306,12 @@ class StateManager:
             if symbol not in self.price_history:
                 self.price_history[symbol] = []
             self.price_history[symbol].append(price)
-            self.price_history[symbol] = self.price_history[symbol][-200:]
+            self.price_history[symbol] = self.price_history[symbol][-2000:]
+            if symbol == 'MES':
+                if self.highest_price_seen is None or price > self.highest_price_seen:
+                    self.highest_price_seen = price
+                if self.lowest_price_seen is None or price < self.lowest_price_seen:
+                    self.lowest_price_seen = price
 
     def save_price_history(self):
         with self._lock:
@@ -266,6 +327,14 @@ class StateManager:
             print(f"--- Loaded price history from {self.state_file} ---")
             for symbol, prices in self.price_history.items():
                 print(f"    - {symbol}: {len(prices)} prices")
+
+    def add_to_blackbox(self, message):
+        with self._lock:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_entry = f"[{timestamp}] {message}"
+            self.log_rolling_buffer.append(log_entry)
+            for signal_id in self.active_trade_logs:
+                self.active_trade_logs[signal_id].append(log_entry)
 
 # Instantiate the global state manager
 state_manager = StateManager()

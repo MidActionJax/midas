@@ -25,6 +25,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private EMA ema15; 
         private double currentBidVol = 0;
         private double currentAskVol = 0;
+        private TcpClient pythonClient;
+        private NetworkStream pythonStream;
 
 
         protected override void OnStateChange()
@@ -37,6 +39,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Calculate = Calculate.OnPriceChange;
                 IsOverlay = true;
                 ServerPort = 36999; // Default to MES port
+                TargetAccountName = "DEMO5611174";
             }
             else if (State == State.Configure)
             {
@@ -47,16 +50,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 foreach(Account a in Cbi.Account.All) { Print("AVAILABLE ACCOUNT: " + a.Name); }
                 // -------------------
 
-                Print("SEARCHING FOR: DEMO5611174 or Playback101");
+                Print("SEARCHING FOR: " + TargetAccountName);
                 // Clean, case-insensitive search
                 var allAccounts = Cbi.Account.All.ToList();
 
-                account = allAccounts.FirstOrDefault(a => a.Name.Equals("DEMO5611174", StringComparison.OrdinalIgnoreCase));
-
-                if (account == null) {
-                    Print("Demo account not found, checking for Playback...");
-                    account = allAccounts.FirstOrDefault(a => a.Name.Equals("Playback101", StringComparison.OrdinalIgnoreCase));
-                }
+                account = allAccounts.FirstOrDefault(a => a.Name.Equals(TargetAccountName, StringComparison.OrdinalIgnoreCase));
 
                 if (account != null) 
                 {
@@ -66,7 +64,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 if (account == null)
                 {
-                    Print("MidasBridge ERROR: Could not find account DEMO5611174 or Playback101!");
+                    Print("MidasBridge ERROR: Could not find account " + TargetAccountName + "!");
                 }
             }
             else if (State == State.DataLoaded)
@@ -79,6 +77,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 isRunning = true;
                 Task.Run(() => ListenForPython());
 
+                InitializePythonConnection();
+
                 // Start the timer to send account updates
                 accountUpdateTimer = new Timer(SendAccountUpdate, null, 0, 5000);
             }
@@ -88,6 +88,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 isRunning = false;
                 server?.Stop();
                 accountUpdateTimer?.Dispose();
+                pythonStream?.Dispose();
+                pythonClient?.Close();
             }
         }
 
@@ -95,27 +97,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             Print("--- DEBUG START ---");
             
-            // 1. Check Account
-            // If we are on Playback (or null), try to see if the Demo account is now available
-            if (account == null || account.Name.Equals("Playback101", StringComparison.OrdinalIgnoreCase)) 
-            {
-                var demoAcc = Cbi.Account.All.FirstOrDefault(a => a.Name.Equals("DEMO5611174", StringComparison.OrdinalIgnoreCase));
-                if (demoAcc != null) {
-                    if (account != null) account.ExecutionUpdate -= OnExecutionUpdate; // Unhook old
-                    account = demoAcc;
-                    account.ExecutionUpdate += OnExecutionUpdate; // Hook new
-                    Print("UPGRADED TO ACCOUNT: " + account.Name);
-                }
-                else if (account == null) {
-                    account = Cbi.Account.All.FirstOrDefault(a => a.Name.Equals("Playback101", StringComparison.OrdinalIgnoreCase));
-                }
-            }
-            
             if (account == null) return;
 
             if (System.Windows.Application.Current != null)
             {
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                 {
                     try {
                         // 2. Check Values
@@ -150,7 +136,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                     catch (Exception ex) {
                         Print("CRASH IN TIMER: " + ex.Message);
                     }
-                });
+                }));
+            }
+        }
+
+        private void InitializePythonConnection()
+        {
+            try
+            {
+                pythonClient = new TcpClient("127.0.0.1", AccountPort);
+                pythonStream = pythonClient.GetStream();
+            }
+            catch (Exception)
+            {
+                // Silent fail on connect to avoid spam, will retry next tick
             }
         }
 
@@ -159,16 +158,24 @@ namespace NinjaTrader.NinjaScript.Indicators
             Print("SENDING DATA TO PYTHON...");
             try
             {
-                using (TcpClient client = new TcpClient("127.0.0.1", AccountPort))
-                using (NetworkStream stream = client.GetStream())
+                if (pythonClient == null || !pythonClient.Connected || pythonStream == null || !pythonStream.CanWrite)
                 {
-                    byte[] bytes = Encoding.UTF8.GetBytes(data);
-                    stream.Write(bytes, 0, bytes.Length);
+                    InitializePythonConnection();
+                }
+
+                if (pythonStream != null && pythonStream.CanWrite)
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(data + "\n");
+                    pythonStream.Write(bytes, 0, bytes.Length);
                 }
             }
             catch (Exception ex)
             {
                 Print("SOCKET ERROR: " + ex.Message);
+                pythonStream?.Dispose();
+                pythonClient?.Close();
+                pythonClient = null;
+                pythonStream = null;
             }
         }
 
@@ -223,11 +230,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                                     {
                                         action = OrderAction.Sell;
                                     }
-                                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                                    System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                                     {
                                        Order myOrder = account.CreateOrder(Instrument, action, OrderType.Market, TimeInForce.Day, quantity, 0, 0, string.Empty, "MidasOrder", null);
                                        account.Submit(new[] { myOrder });
-                                    });
+                                    }));
                                     Print($"Submitted {side} order for {quantity} {symbol}");
                                 }
                                 else
@@ -287,7 +294,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     
                     // Simple side detection logic
                     string side = marketDataUpdate.Price >= GetCurrentAsk() ? "BUY" : "SELL";
-                    string emaValue = (ema15 != null && CurrentBars[1] >= 0) ? ema15[0].ToString("F2") : "null";
+                    string emaValue = "null";
+                    if (ema15 != null && ema15.IsValidDataPoint(0)) 
+                    {
+                        emaValue = ema15[0].ToString("F2");
+                    }
                     
                     string json = "{" +
                         "\"LABEL\":\"TRADE\"," +
@@ -321,6 +332,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Range(1000, 65535)]
         [Display(Name="Server Port", Description="Port for this specific chart", Order=1, GroupName="Parameters")]
         public int ServerPort { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name="Target Account", Description="Enter Playback101 or DEMO5611174", Order=2, GroupName="Parameters")]
+        public string TargetAccountName { get; set; }
     }
 }
 

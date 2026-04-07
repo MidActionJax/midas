@@ -83,6 +83,11 @@
                 <input class="form-check-input" type="checkbox" role="switch" id="auto-buy-switch">
                 <label class="form-check-label text-light fw-bold" for="auto-buy-switch" id="auto-buy-label">🚀 AUTO-TRADE MODE</label>
             </div>
+            <!-- Scheduler Override Switch -->
+            <div class="form-check form-switch fs-4">
+                <input class="form-check-input" type="checkbox" role="switch" id="ignoreSchedulerToggle">
+                <label class="form-check-label text-light" for="ignoreSchedulerToggle" id="ignoreSchedulerLabel">Override Scheduler</label>
+            </div>
             <button id="enable-audio" class="btn btn-outline-warning">🔈 Enable Audio</button>
             <a id="start-button" href="/start_bot" class="btn btn-success">Start Engine</a>
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
@@ -338,6 +343,8 @@
                     const devModeLabel = document.getElementById('dev-mode-label');
                     const autoBuySwitch = document.getElementById('auto-buy-switch');
                     const autoBuyLabel = document.getElementById('auto-buy-label');
+                    const ignoreSchedulerToggle = document.getElementById('ignoreSchedulerToggle');
+                    const ignoreSchedulerLabel = document.getElementById('ignoreSchedulerLabel');
                     const chopIndexEl = document.getElementById('chop-index');
 
 
@@ -561,6 +568,16 @@
                         autoBuyLabel.style.textShadow = '';
                     }
 
+                    // Scheduler Override Switch
+                    if (ignoreSchedulerToggle) {
+                        ignoreSchedulerToggle.checked = data.ignore_scheduler;
+                        if (data.ignore_scheduler) {
+                            ignoreSchedulerLabel.classList.add('text-warning');
+                        } else {
+                            ignoreSchedulerLabel.classList.remove('text-warning');
+                        }
+                    }
+
                     // Performance Scorecard
                     if (data.performance) {
                         totalPnlEl.textContent = formatCurrency(data.performance.total_pnl);
@@ -764,6 +781,21 @@
                 }
             })
             .catch(error => console.error("Error switching auto-buy mode:", error));
+        });
+
+        // Scheduler Override Switcher Listener
+        document.getElementById('ignoreSchedulerToggle').addEventListener('change', function(e) {
+            fetch('/api/toggle_scheduler', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateStatus(); 
+                }
+            })
+            .catch(error => console.error("Error toggling scheduler override:", error));
         });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
