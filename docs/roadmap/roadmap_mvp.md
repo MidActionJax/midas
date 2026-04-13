@@ -414,3 +414,20 @@ The Macro Veto: If a high-confidence signal fires within those first 5 minutes, 
 The Result: At the open, institutions often stack massive walls (like that 400-lot wall we saw). The Titanium Shield will VETO any trade that is within 1.5 points of those walls, effectively keeping you flat until the "Opening Range" settles and a clear path opens up.
 
 --- CHANGE TO 10 RUBBER BAND
+
+---
+🟢 Sprint 16: The "Glass Box" Upgrade (X-Ray Telemetry)
+Goal: Expose the AI's internal thoughts to the UI in real-time so the user never has to guess why the bot is (or isn't) trading.
+
+[ ] The Heartbeat Socket: Create a dedicated WebSocket channel in Flask that broadcasts the [CHECK] logs from engine.py every second.
+[ ] The Real-Time Checklist UI: Build a pulsing, hacker-aesthetic checklist next to the main chart.
+[ ] Dynamic Status Flashing: Code the JS to instantly flash [ ✓ ] PASS (Green) or [ X ] FAIL (Red) for each core filter: Trend, Volatility, Regime, ML Confidence, and Pos Guards.
+[ ] The "Distance to Trigger" Meter: Add a progress bar that fills up based on the ML Confidence score. If it hits 85%, it visually sparks and triggers the Approval Card.
+🟢 Sprint 17: "Bionic Trading" (The Manual Override Console)
+Goal: Allow the user to front-run the AI while forcing the bot to act as a strict risk-management bodyguard for manual trades.
+
+[ ] The Override UI Module: Build a sleek control panel on the dashboard with a "Contract Quantity" input box (or 1, 2, 5, 10 quick-select buttons).
+[ ] The Execution Buttons: Add massive, color-coded [ MARKET BUY ] and [ MARKET SELL ] buttons.
+[ ] The Signal Injector: Route these buttons through Flask to inject a MANUAL_OVERRIDE signal directly into engine.py's pending queue.
+[ ] Algorithmic Hand-off: Ensure that the moment a manual trade fills, the Engine immediately adopts the position, applying the Auto-Breakeven, Fluid Ratchet, and Micro-Profit Protectors automatically.
+---
