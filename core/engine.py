@@ -231,9 +231,11 @@ class MidasEngine(threading.Thread):
                         pos['unrealized_pnl'] = points_profit * multiplier * pos.get('size', 1)
                         pos['max_profit'] = max(pos.get('max_profit', points_profit), points_profit)
                         
+                        # Calculate ATR continuously for dynamic trailing
+                        price_hist = state.state_manager.price_history.get(pos_symbol, [])
+                        current_atr = logic.get_current_atr(price_hist) if price_hist else 2.0
+
                         if 'dynamic_sl' not in pos:
-                            price_hist = state.state_manager.price_history.get(pos_symbol, [])
-                            current_atr = logic.get_current_atr(price_hist) if price_hist else 2.0
                             if state.state_manager.is_concrete_wet:
                                 pos['dynamic_sl'] = max(-6.0, - (1.5 * current_atr))
                             else:
@@ -246,19 +248,21 @@ class MidasEngine(threading.Thread):
                             pos['last_pnl_log_time'] = current_time
 
                         # --- TASK 2: MICRO & STEP-BASED RATCHET ---
+                        breakeven_trigger = max(0.75, current_atr * 0.3)
+                        ratchet_trigger = max(1.25, current_atr * 0.5)
+                        trail_distance = max(0.75, current_atr * 0.3)
+
                         # Continuous fluid trailing stop based on max_profit
-                        if pos['max_profit'] >= 1.25:
-                            # Tighter trailing stop: lock in 0.25 if we hit 1.25, then trail by 0.75 points
-                            new_sl = max(0.25, pos['max_profit'] - 0.75)
+                        if pos['max_profit'] >= ratchet_trigger:
+                            new_sl = max(0.25, pos['max_profit'] - trail_distance)
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- FLUID RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} ---")
-                        elif pos['max_profit'] >= 0.75:
-                            # Auto-Breakeven at 0.75 points
+                                log_to_both(f"--- FLUID RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        elif pos['max_profit'] >= breakeven_trigger:
                             new_sl = 0.25
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} ---")
+                                log_to_both(f"--- AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
                                  
                         # Remove the hard ceiling
                         hit_tp = False 
@@ -606,6 +610,9 @@ class MidasEngine(threading.Thread):
                                 # Reset for next bar
                                 self.price_buffer[symbol] = []
                                 self.last_bar_time[symbol] = current_time
+                                
+                                if symbol == 'MES':
+                                    state.state_manager.cvd_history.append(state.state_manager.session_cvd)
 
 
                         # Only perform deep analysis for the execution symbol (MES)
@@ -684,15 +691,6 @@ class MidasEngine(threading.Thread):
 
                                 # --- DECISION TRACE ---
                                 log_to_both(f"--- SIGNAL TRACE [{symbol}] ---")
-                                
-                                # 🛑 SURGICAL FIX: Force Iceberg to respect the AI's chosen direction
-                                active_brain_reason = signal.get('reason', '')
-                                if 'SHORT' in active_brain_reason:
-                                    signal['type'] = 'SELL_SIGNAL'
-                                    signal['signal_direction'] = 'SHORT'
-                                elif 'LONG' in active_brain_reason:
-                                    signal['type'] = 'BUY_SIGNAL'
-                                    signal['signal_direction'] = 'BUY'
 
                                 # 0. Core Strategy Filters (Trend & Volatility)
                                 trend = signal.get('trend')
@@ -710,7 +708,7 @@ class MidasEngine(threading.Thread):
                                 else:
                                     trend_pass = signal.get('trend_pass', True)
                                 
-                                if 'Momentum' in signal.get('reason', '') or 'Dual-Core' in active_brain_reason:
+                                if 'Momentum' in signal.get('reason', '') or 'Dual-Core' in signal.get('reason', ''):
                                     trend_pass = True
 
                                 vol_pass = signal.get('volatility_pass', True)
@@ -788,8 +786,37 @@ class MidasEngine(threading.Thread):
                                 else:
                                     log_to_both(f"[CHECK] Hard Guard: [PASS]")
 
+                                # 5. Micro-CVD Hollow Fakeout Guard (Adaptive)
+                                cvd_pass = True
+                                cvd_hist = state.state_manager.cvd_history
+                                
+                                if len(cvd_hist) >= 5:
+                                    current_cvd = state.state_manager.session_cvd
+                                    micro_cvd_5m = current_cvd - cvd_hist[-5]
+                                    
+                                    # Calculate what a "normal" 5m volume push looks like right now
+                                    cvd_efforts = [abs(cvd_hist[i] - cvd_hist[i-5]) for i in range(5, len(cvd_hist))]
+                                    calculated_avg = sum(cvd_efforts) / len(cvd_efforts) if cvd_efforts else 50.0
+                                    
+                                    # THE FIX: Enforce a hard minimum floor so the requirement never drops to zero
+                                    avg_cvd_effort = max(calculated_avg, 50.0)
+                                    
+                                    # Require the current setup to have at least 30% of the recent average volume
+                                    required_effort = avg_cvd_effort * 0.20
+                                    
+                                    if signal['type'] == 'BUY_SIGNAL' and micro_cvd_5m < required_effort:
+                                        cvd_pass = False
+                                        log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow Move: {micro_cvd_5m:.1f} vol vs Req {required_effort:.1f})")
+                                    elif signal['type'] == 'SELL_SIGNAL' and micro_cvd_5m > -required_effort:
+                                        cvd_pass = False
+                                        log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow Move: {micro_cvd_5m:.1f} vol vs Req {-required_effort:.1f})")
+                                    else:
+                                        log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: ±{required_effort:.1f})")
+                                else:
+                                    log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Warming up volume memory...)")
+
                                 # FINAL DECISION
-                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass):
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass):
                                     log_to_both("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
                                         continue

@@ -128,7 +128,7 @@ class NTFuturesAdapter:
                                 side = message.get('SIDE', '').upper()
                                 qty = int(message.get('QUANTITY', 1))
                                 fill_price = message.get('PRICE')
-                                
+
                                 # Update the tracked position's true entry price
                                 if sym:
                                     if fill_price:

@@ -796,29 +796,27 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                     print(f"[🛑 MACRO VETO] LONG Blocked! Price ({current_price_mes}) is aiming at a {macro_ceiling_vol}-contract CEILING wall at {macro_ceiling_price} (Threshold: {dynamic_wall:.1f}).")
                     # Signal remains None, forcing a HOLD
                 else:
-                    # Path is clear! Build the signal.
-                    signal_type = 'BUY_SIGNAL' if active_brain == 'LONG' else 'SELL_SIGNAL'
+                    # Path is clear! Build the signal natively.
+                    signal_type = 'SELL_SIGNAL' if active_brain == 'SHORT' else 'BUY_SIGNAL'
+                    
                     signal = {
                         'id': str(uuid.uuid4()),
                         'symbol': symbol,
                         'type': signal_type,
-                        'price': best_ask if signal_type == 'BUY_SIGNAL' else best_bid,
+                        'price': best_bid if signal_type == 'SELL_SIGNAL' else best_ask,
                         'size': 1.0,
-                        'timestamp': round(time.time(), 4)
+                        'timestamp': round(time.time(), 4),
+                        'reason': f'Dual-Core Sniper ({active_brain})',
+                        'signal_direction': 'SHORT' if active_brain == 'SHORT' else 'BUY',
+                        'trend_pass': True,
+                        'volatility_pass': True
+                        # Notice we REMOVED the fake atr=99.0 hack here so your stop-loss math stays safe
                     }
-                
-                # --- SURGICAL UPDATE: Add Direction & Alert for AI Sniper ---
-                signal['reason'] = f'Dual-Core Sniper ({active_brain})'
-                if active_brain == "LONG":
-                    signal['signal_direction'] = "BUY"
-                    print(f"[🚨 LONG SIGNAL FIRED] Dual-Core Sniper triggered by {active_brain} Brain.")
-                else: # SHORT
-                    signal['signal_direction'] = "SHORT"
-                    print(f"[🚨 SHORT SIGNAL FIRED] Dual-Core Sniper triggered by {active_brain} Brain.")
-                signal['trend_pass'] = True
-                signal['volatility_pass'] = True
-                # 🛑 SURGICAL FIX: Spoof the ATR so engine.py can't veto it
-                signal['atr'] = 99.0
+                    
+                    if active_brain == "SHORT":
+                        print(f"[🚨 SHORT SIGNAL FIRED] Dual-Core Sniper triggered by SHORT Brain.")
+                    else:
+                        print(f"[🚨 LONG SIGNAL FIRED] Dual-Core Sniper triggered by LONG Brain.")
 
             if signal:
                 signal['ml_confidence'] = f"{ml_score_pct:.2f}%"

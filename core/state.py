@@ -48,6 +48,7 @@ class StateManager:
         self.circuit_breaker_tripped = False
         self.current_market_time = None
         self.session_cvd = 0.0
+        self.cvd_history = deque(maxlen=60) # 60-minute rolling memory of CVD
         self.state_file = state_file
         self.closed_signals = set()
         self.opening_range_high = None
@@ -234,6 +235,7 @@ class StateManager:
             self.closed_signals.clear()
             self.consecutive_losses = 0
             self.time_out_until = None
+            self.cvd_history.clear()
 
     def add_pnl(self, amount):
         with self._lock:
