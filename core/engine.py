@@ -269,7 +269,8 @@ class MidasEngine(threading.Thread):
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
-                        time_open = time.time() - pos.get('timestamp', time.time())
+                        current_market_ts = state.state_manager.get_current_time().timestamp()
+                        time_open = current_market_ts - pos.get('timestamp', current_market_ts)
                         hit_time_kill = time_open >= 45 and points_profit <= 0
                         
                         # --- STAGNATION TIGHTENER ---
@@ -543,9 +544,19 @@ class MidasEngine(threading.Thread):
                         if hasattr(self.adapter, 'current_features'):
                             ema_15 = self.adapter.current_features.get(f'ema_15_{symbol.lower()}')
 
+                        # Safety check for dist_to_ema calculations
+                        dist_to_ema = 0.0
+                        if price is not None and ema_15 is not None:
+                            dist_to_ema = price - ema_15
+
                         chart_time = getattr(self.adapter, 'chart_time', None)
                         if chart_time is None and hasattr(self.adapter, 'current_features'):
                             chart_time = self.adapter.current_features.get('chart_time')
+                            # SURGICAL FIX: Force extraction from Market Depth payload if adapter didn't map it
+                        if chart_time is None and hasattr(self.adapter, 'get_market_depth'):
+                            _md = self.adapter.get_market_depth(symbol)
+                            if isinstance(_md, dict):
+                                chart_time = _md.get('chart_time') or _md.get('timestamp')
                         if chart_time:
                             state.state_manager.update_market_time(chart_time)
 
@@ -556,14 +567,18 @@ class MidasEngine(threading.Thread):
                             logic.update_session_anchors(price, current_session)
                         
                         # 1. Distance to Floor
-                        dist_to_low = (price - state.state_manager.opening_range_low) if state.state_manager.opening_range_low is not None else "N/A"
+                        dist_to_low = "N/A"
+                        if price is not None and state.state_manager.opening_range_low is not None:
+                            dist_to_low = price - state.state_manager.opening_range_low
                         
                         # 2. Distance to Ceiling (Using getattr to prevent crashes if it's missing)
                         range_high = getattr(state.state_manager, 'opening_range_high', None)
-                        dist_to_high = (range_high - price) if range_high is not None else "N/A"
+                        dist_to_high = "N/A"
+                        if price is not None and range_high is not None:
+                            dist_to_high = range_high - price
                         
                         # 3. Print the full 360-degree view
-                        log_to_both(f"HEARTBEAT: {symbol} @ {price} | 15m EMA: {ema_15} | Session: {current_session} | Dist to Low: {dist_to_low} | Dist to High: {dist_to_high}")
+                        log_to_both(f"HEARTBEAT: {symbol} @ {price} | 15m EMA: {ema_15} | Dist to EMA: {dist_to_ema:.2f} | Session: {current_session} | Dist to Low: {dist_to_low} | Dist to High: {dist_to_high}")
                         state.state_manager.add_price(symbol, price)
                         log_to_both(f"--- CURRENT SESSION CVD: {state.state_manager.session_cvd} ---")
                         self.price_buffer[symbol].append(price)
@@ -695,21 +710,21 @@ class MidasEngine(threading.Thread):
                                 # 0. Core Strategy Filters (Trend & Volatility)
                                 trend = signal.get('trend')
                                 market_trend = trend
-                                signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
+                                signal_direction = signal.get('signal_direction')
+                                if not signal_direction:
+                                    signal_direction = 'LONG' if 'BUY' in signal.get('type', '').upper() else 'SHORT'
                                 
                                 if market_trend in ['BULLISH', 'BEARISH']:
-                                    if signal_direction == 'BUY' and market_trend == 'BULLISH':
+                                    if signal_direction == 'LONG' and market_trend == 'BULLISH':
                                         trend_pass = True
-                                    elif signal_direction == 'SELL' and market_trend == 'BEARISH':
+                                    elif signal_direction == 'SHORT' and market_trend == 'BEARISH':
                                         trend_pass = True
                                     else:
                                         trend_pass = False
                                     signal['trend_pass'] = trend_pass
                                 else:
-                                    trend_pass = signal.get('trend_pass', True)
-                                
-                                if 'Momentum' in signal.get('reason', '') or 'Dual-Core' in signal.get('reason', ''):
-                                    trend_pass = True
+                                    trend_pass = signal.get('trend_pass', False)
+                                    signal['trend_pass'] = trend_pass
 
                                 vol_pass = signal.get('volatility_pass', True)
                                 
@@ -804,14 +819,18 @@ class MidasEngine(threading.Thread):
                                     # Require the current setup to have at least 30% of the recent average volume
                                     required_effort = avg_cvd_effort * 0.20
                                     
-                                    if signal['type'] == 'BUY_SIGNAL' and micro_cvd_5m < required_effort:
-                                        cvd_pass = False
-                                        log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow Move: {micro_cvd_5m:.1f} vol vs Req {required_effort:.1f})")
-                                    elif signal['type'] == 'SELL_SIGNAL' and micro_cvd_5m > -required_effort:
-                                        cvd_pass = False
-                                        log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow Move: {micro_cvd_5m:.1f} vol vs Req {-required_effort:.1f})")
-                                    else:
-                                        log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: ±{required_effort:.1f})")
+                                    if signal_direction == 'LONG':
+                                        if micro_cvd_5m < 0 or abs(micro_cvd_5m) < required_effort:
+                                            cvd_pass = False
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow/Counter Move: {micro_cvd_5m:.1f} vol vs Req +{required_effort:.1f})")
+                                        else:
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: +{required_effort:.1f})")
+                                    elif signal_direction == 'SHORT':
+                                        if micro_cvd_5m > 0 or abs(micro_cvd_5m) < required_effort:
+                                            cvd_pass = False
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow/Counter Move: {micro_cvd_5m:.1f} vol vs Req -{required_effort:.1f})")
+                                        else:
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: -{required_effort:.1f})")
                                 else:
                                     log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Warming up volume memory...)")
 
@@ -878,6 +897,7 @@ class MidasEngine(threading.Thread):
                                                             side_to_send = 'SELL' # Default for regular signals
                                                             if signal.get('signal_direction') == 'SHORT':
                                                                 side_to_send = 'SHORT' # Override for AI Short signal
+                                                                pos_type = 'SHORT'
                                                             trade_executed = self.adapter.execute_sell(symbol, dynamic_size, exec_price, signal_id=str(signal.get('id')), side=side_to_send)
                                                         
                                                         if trade_executed:
@@ -886,8 +906,8 @@ class MidasEngine(threading.Thread):
                                                                 'entry_price': exec_price,
                                                                 'size': dynamic_size,
                                                                 'type': pos_type,
-                                                                'timestamp': time.time(),
-                                                                'signal_timestamp': float(signal['timestamp']),
+                                                                'timestamp': state.state_manager.get_current_time().timestamp(),
+                                                                'signal_timestamp': float(signal.get('timestamp', state.state_manager.get_current_time().timestamp())),
                                                                 'signal_id': signal.get('id', '')
                                                             }
                                                             

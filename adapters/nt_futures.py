@@ -118,7 +118,18 @@ class NTFuturesAdapter:
                                     side = message.get('SIDE')
                                     self.scanner.add_trade(symbol, time.time(), size, side)
                                     self.scanner.detect_rhythmic_patterns(symbol)
-
+                            # --- NEW RETURN PATH FOR FILLS ---
+                            elif label == 'MARKET_DEPTH':
+                                sym = message.get('SYMBOL')
+                                if sym:
+                                    if not hasattr(self, 'live_dom'):
+                                        self.live_dom = {}
+                                    self.live_dom[sym] = {
+                                        'bids': message.get('BIDS', []),
+                                        'asks': message.get('ASKS', []),
+                                        'chart_time': message.get('chart_time'),
+                                        'timestamp': message.get('timestamp')
+                                    }
                             # --- NEW RETURN PATH FOR FILLS ---
                             elif label == 'ORDER_FILL':
                                 print(f"--- ORDER FILL RECEIVED: {message} ---")
@@ -238,9 +249,13 @@ class NTFuturesAdapter:
         """
         price = self.get_current_price(symbol)
         
-        if not price or math.isnan(price):
-            return {'bids': [], 'asks': []}
-
+        if hasattr(self, 'live_dom') and symbol in self.live_dom:
+            dom = self.live_dom[symbol]
+            if dom['bids'] and dom['asks']:
+                return dom
+                
+        # Fallback to empty if socket hasn't sent DOM yet to avoid crashes
+        return {'bids': [], 'asks': []}
         # Format remains identical to the original blueprint
         bids = [[round(price - (i * 0.25), 2), round(random.uniform(1, 5), 2)] for i in range(1, 6)]
         asks = [[round(price + (i * 0.25), 2), round(random.uniform(1, 5), 2)] for i in range(1, 6)]

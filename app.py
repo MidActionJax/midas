@@ -436,14 +436,15 @@ def approve_signal(signal_id):
                 adapter.execute_sell(config.TRADING_SYMBOL, current_pos, exec_price, signal_id='REVERSAL')
                 return jsonify({'status': 'success', 'message': 'Reversal initiated. Signal queued.'})
 
-            trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id)
+            side_to_send = signal_to_execute.get('signal_direction', 'SHORT')
+            trade_executed = adapter.execute_sell(config.TRADING_SYMBOL, dynamic_size, exec_price, signal_id=signal_id, side=side_to_send)
             
             if trade_executed:
                 position = {
                     'symbol': config.TRADING_SYMBOL,
                     'entry_price': exec_price,
                     'size': dynamic_size,
-                    'type': 'SELL', # Or 'SELL' in the other block
+                    'type': 'SHORT' if side_to_send == 'SHORT' else 'SELL',
                     # FIX: Start a fresh timer for the Grace Period
                     'timestamp': time.time(), 
                     # Keep the original ID for the CSV Logger
@@ -621,7 +622,7 @@ if __name__ == '__main__':
         # Start Daily Scheduler
         scheduler = BackgroundScheduler(timezone='US/Arizona')
         scheduler.add_job(scheduled_morning_start, 'cron', day_of_week='mon-fri', hour=6, minute=0)
-        scheduler.add_job(scheduled_evening_stop, 'cron', day_of_week='mon-fri', hour=11, minute=7)
+        scheduler.add_job(scheduled_evening_stop, 'cron', day_of_week='mon-fri', hour=15, minute=15)
         scheduler.add_job(lambda: print('[⏱️ SCHEDULER] Heartbeat check...'), 'interval', minutes=1)
         scheduler.start()
 
