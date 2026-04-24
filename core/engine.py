@@ -173,6 +173,22 @@ class MidasEngine(threading.Thread):
                 raw_type = pos.get('type', 'BUY').upper()
                 pos_type = 'LONG' if 'BUY' in raw_type else 'SHORT'
                 
+                # --- DEAD SOCKET SWEEPER ---
+                # If the bot triggered an exit, track the real-world time.
+                if pos.get('exit_triggered'):
+                    if 'exit_real_timestamp' not in pos:
+                        pos['exit_real_timestamp'] = time.time()
+                    # If 10 real seconds have passed and the position is still in memory, the socket crashed. Force clear it.
+                    elif time.time() - pos['exit_real_timestamp'] > 10:
+                        print(f"--- 🧹 ORPHAN SWEEPER: Broker connection lost/timed out. Force clearing {pos_symbol} ---")
+                        try:
+                            state.state_manager.active_positions.remove(pos)
+                        except ValueError:
+                            pass
+                        if hasattr(state.state_manager, 'live_nt_positions'):
+                            state.state_manager.live_nt_positions[pos_symbol] = 0
+                        continue
+
                 # --- THE ULTIMATE FUZZY MATCH ---
                 match = None
                 
@@ -196,7 +212,7 @@ class MidasEngine(threading.Thread):
 
                 # --- VIRTUAL MATCH GRACE PERIOD ---
                 # If NT8 hasn't reported the fill yet, use REAL CPU time (not Replay time) to wait for network latency
-                if match is None and abs(time.time() - pos.get('real_timestamp', time.time())) < 5 and not pos.get('exit_triggered'):
+                if match is None and abs(time.time() - pos.get('real_timestamp', time.time())) < 15 and not pos.get('exit_triggered'):
                     match = {'size': pos.get('size', 1), 'side': pos_type}
 
                 # Identify and remove any positions that share the exact same entry_price and signal_timestamp
@@ -301,6 +317,7 @@ class MidasEngine(threading.Thread):
                                 # Tag the position IMMEDIATELY to prevent machine-gunning NinjaTrader on socket drop
                                 pos['exit_triggered'] = True
                                 pos['exit_time'] = time.time()
+                                self.last_trade_time = state.state_manager.get_current_time().timestamp()
                                 
                                 try:
                                     # --- HARD GUARD: Right before executing exit PLACE_ORDER ---
@@ -357,7 +374,7 @@ class MidasEngine(threading.Thread):
 
                     # --- BULLETPROOF GRACE PERIOD ---
                     # Use real CPU time for network syncing
-                    if abs(time.time() - pos.get('real_timestamp', time.time())) < 5 and not pos.get('exit_triggered'):
+                    if abs(time.time() - pos.get('real_timestamp', time.time())) < 15 and not pos.get('exit_triggered'):
                         if time.time() - pos.get('last_match_fail_time', 0) >= 5:
                             print(f"[⏳ SYNC WAIT] NT8 hasn't confirmed {pos_symbol} order yet. Waiting...")
                             pos['last_match_fail_time'] = time.time()
@@ -672,6 +689,7 @@ class MidasEngine(threading.Thread):
                             elif in_cooldown:
                                 cooldown_remaining = 300 - (state.state_manager.get_current_time().timestamp() - self.last_trade_time)
                                 log_to_both(f"--- ACTIVE PROFILE: COOLDOWN (Cooling down for {int(cooldown_remaining)}s) ---")
+                                continue
                             elif in_timeout:
                                 log_to_both(f"--- ACTIVE PROFILE: TIME-OUT (Active for {int(state.state_manager.time_out_until - time.time())}s) ---")
                             elif chop_index > 50.0:
@@ -901,6 +919,15 @@ class MidasEngine(threading.Thread):
                                                             trade_executed = self.adapter.execute_sell(symbol, dynamic_size, exec_price, signal_id=str(signal.get('id')), side=side_to_send)
                                                         
                                                         if trade_executed:
+                                                            # --- REPLAY BYPASS: Force Broker Memory Update ---
+                                                            # Since NT8 drops entry receipts in replay mode, forcefully assume it filled immediately.
+                                                            if not hasattr(state.state_manager, 'live_nt_positions'):
+                                                                state.state_manager.live_nt_positions = {}
+                                                            current_qty = state.state_manager.live_nt_positions.get(symbol, 0)
+                                                            if pos_type == 'SHORT':
+                                                                state.state_manager.live_nt_positions[symbol] = current_qty - dynamic_size
+                                                            else:
+                                                                state.state_manager.live_nt_positions[symbol] = current_qty + dynamic_size
                                                             position = {
                                                                 'symbol': symbol,
                                                                 'entry_price': exec_price,
