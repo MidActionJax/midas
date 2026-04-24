@@ -152,11 +152,13 @@ class StateManager:
                     if pd.isna(dt):
                         return
                     
-                    # SURGICAL FIX: Stop hardcoding Arizona! Use NT's provided tz, or assume Eastern
+                    # --- SURGICAL TIMEZONE FIX ---
+                    # Localize as Arizona (MST) first, then convert to Eastern (EST/EDT)
                     if dt.tzinfo is not None:
                         dt_correct = dt.tz_convert('US/Eastern')
                     else:
-                        dt_correct = dt.tz_localize('US/Eastern')
+                        # If user is in AZ, localize as AZ then convert to NY
+                        dt_correct = dt.tz_localize('US/Arizona').tz_convert('US/Eastern')
                 
                 # Convert to standard pydatetime and explicitly use ZoneInfo to prevent comparison errors in session logic
                 dt_pydatetime = dt_correct.to_pydatetime()

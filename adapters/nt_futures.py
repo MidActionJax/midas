@@ -131,6 +131,7 @@ class NTFuturesAdapter:
                                         'timestamp': message.get('timestamp')
                                     }
                             # --- NEW RETURN PATH FOR FILLS ---
+                            # --- NEW RETURN PATH FOR FILLS ---
                             elif label == 'ORDER_FILL':
                                 print(f"--- ORDER FILL RECEIVED: {message} ---")
                                 
@@ -140,33 +141,19 @@ class NTFuturesAdapter:
                                 qty = int(message.get('QUANTITY', 1))
                                 fill_price = message.get('PRICE')
 
-                                if sym:
-                                    # SURGICAL GHOST KILLER: Instantly update NT broker memory so engine doesn't re-adopt!
-                                    if not hasattr(state_manager, 'live_nt_positions'):
-                                        state_manager.live_nt_positions = {}
-                                    
-                                    current_qty = state_manager.live_nt_positions.get(sym, 0)
-                                    if side == 'BUY':
-                                        state_manager.live_nt_positions[sym] = current_qty + qty
-                                    elif side == 'SELL' or side == 'SHORT':
-                                        state_manager.live_nt_positions[sym] = current_qty - qty
-                                        
-                                    if state_manager.live_nt_positions[sym] == 0:
-                                        print(f"--- 🧟 GHOST KILLER: NT8 confirms {sym} is FLAT. Memory wiped! ---")
-                                        
                                 # Update the tracked position's true entry price
-                                if sym:
-                                    if fill_price:
-                                        tracked_positions = state_manager.get_active_positions()
-                                        for p in tracked_positions:
-                                            if p.get('symbol') == sym and not p.get('exit_triggered'):
-                                                p_type = p.get('type', '').upper()
-                                                is_long = 'BUY' in p_type or 'LONG' in p_type
-                                                is_short = 'SELL' in p_type or 'SHORT' in p_type
-                                                if (side == 'BUY' and is_long) or (side == 'SELL' and is_short):
-                                                    p['entry_price'] = float(fill_price)
-                                                    print(f"--- ACTUAL FILL PRICE UPDATED TO {fill_price} FOR {sym} ---")
-                                                    break
+                                # We keep this part so your PnL math in Python is accurate to the penny!
+                                if sym and fill_price:
+                                    tracked_positions = state_manager.get_active_positions()
+                                    for p in tracked_positions:
+                                        if p.get('symbol') == sym and not p.get('exit_triggered'):
+                                            p_type = p.get('type', '').upper()
+                                            is_long = 'BUY' in p_type or 'LONG' in p_type
+                                            is_short = 'SELL' in p_type or 'SHORT' in p_type
+                                            if (side == 'BUY' and is_long) or (side == 'SELL' and is_short):
+                                                p['entry_price'] = float(fill_price)
+                                                print(f"--- ACTUAL FILL PRICE UPDATED TO {fill_price} FOR {sym} ---")
+                                                break
                                                     
                                 print(f"--- ACTIVE POSITION UPDATED: {sym} ---")
                     except json.JSONDecodeError:
