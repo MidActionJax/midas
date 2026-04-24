@@ -140,6 +140,20 @@ class NTFuturesAdapter:
                                 qty = int(message.get('QUANTITY', 1))
                                 fill_price = message.get('PRICE')
 
+                                if sym:
+                                    # SURGICAL GHOST KILLER: Instantly update NT broker memory so engine doesn't re-adopt!
+                                    if not hasattr(state_manager, 'live_nt_positions'):
+                                        state_manager.live_nt_positions = {}
+                                    
+                                    current_qty = state_manager.live_nt_positions.get(sym, 0)
+                                    if side == 'BUY':
+                                        state_manager.live_nt_positions[sym] = current_qty + qty
+                                    elif side == 'SELL' or side == 'SHORT':
+                                        state_manager.live_nt_positions[sym] = current_qty - qty
+                                        
+                                    if state_manager.live_nt_positions[sym] == 0:
+                                        print(f"--- 🧟 GHOST KILLER: NT8 confirms {sym} is FLAT. Memory wiped! ---")
+                                        
                                 # Update the tracked position's true entry price
                                 if sym:
                                     if fill_price:

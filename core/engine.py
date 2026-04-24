@@ -146,7 +146,7 @@ class MidasEngine(threading.Thread):
                     is_tracked = any(p.get('symbol') in sym for p in tracked_positions)
                     if not is_tracked:
                         # 🛡️ GHOST ADOPTION SHIELD: Ignore straggling NT balances for 15s after an exit
-                        if time.time() - self.last_trade_time > 15:
+                        if state.state_manager.get_current_time().timestamp() - self.last_trade_time > 15:
                             current_price = self.adapter.get_current_price(sym)
                             adopted_pos = {
                                 'symbol': 'MES' if 'MES' in sym else ('MNQ' if 'MNQ' in sym else sym),
@@ -195,9 +195,8 @@ class MidasEngine(threading.Thread):
                                 break
 
                 # --- VIRTUAL MATCH GRACE PERIOD ---
-                # If NT8 hasn't reported the fill yet, assume we are in the position for the first 15 seconds.
-                entry_time = pos.get('timestamp', time.time())
-                if match is None and time.time() - entry_time < 15 and not pos.get('exit_triggered'):
+                # If NT8 hasn't reported the fill yet, use REAL CPU time (not Replay time) to wait for network latency
+                if match is None and abs(time.time() - pos.get('real_timestamp', time.time())) < 5 and not pos.get('exit_triggered'):
                     match = {'size': pos.get('size', 1), 'side': pos_type}
 
                 # Identify and remove any positions that share the exact same entry_price and signal_timestamp
@@ -354,14 +353,14 @@ class MidasEngine(threading.Thread):
                                     pos.pop('exit_time', None)
                 else:
                     # --- POSITION FLAT/CLOSED FLOW ---
-                    current_time = time.time()
+                    current_time = state.state_manager.get_current_time().timestamp()
 
                     # --- BULLETPROOF GRACE PERIOD ---
-                    entry_time = pos.get('timestamp', time.time())
-                    if time.time() - entry_time < 15 and not pos.get('exit_triggered'):
-                        if current_time - pos.get('last_match_fail_time', 0) >= 5:
+                    # Use real CPU time for network syncing
+                    if abs(time.time() - pos.get('real_timestamp', time.time())) < 5 and not pos.get('exit_triggered'):
+                        if time.time() - pos.get('last_match_fail_time', 0) >= 5:
                             print(f"[⏳ SYNC WAIT] NT8 hasn't confirmed {pos_symbol} order yet. Waiting...")
-                            pos['last_match_fail_time'] = current_time
+                            pos['last_match_fail_time'] = time.time()
                         continue 
 
                     if pos.get('exit_triggered') and current_time - pos.get('last_match_fail_time', 0) >= 5:
@@ -450,7 +449,7 @@ class MidasEngine(threading.Thread):
                         state.state_manager.account_balance += final_pnl
                     
                     log_to_both(f"--- EXIT DETECTED: {final_pnl} ---")
-                    self.last_trade_time = time.time()
+                    self.last_trade_time = state.state_manager.get_current_time().timestamp()
         except Exception as e:
             print(f"Error in manage_positions: {e}")
 
@@ -502,7 +501,7 @@ class MidasEngine(threading.Thread):
 
                     # --- Cooldown period after a trade ---
                     in_cooldown = False
-                    if time.time() - self.last_trade_time < 300: # 5-minute cooldown
+                    if state.state_manager.get_current_time().timestamp() - self.last_trade_time < 300: # 5-minute cooldown
                         in_cooldown = True
 
                     # --- 60-Minute Time-Out Check ---
@@ -671,7 +670,8 @@ class MidasEngine(threading.Thread):
                             if thresholds['halt']:
                                 pass
                             elif in_cooldown:
-                                log_to_both(f"--- ACTIVE PROFILE: COOLDOWN (Cooling down for {int(300 - (time.time() - self.last_trade_time))}s) ---")
+                                cooldown_remaining = 300 - (state.state_manager.get_current_time().timestamp() - self.last_trade_time)
+                                log_to_both(f"--- ACTIVE PROFILE: COOLDOWN (Cooling down for {int(cooldown_remaining)}s) ---")
                             elif in_timeout:
                                 log_to_both(f"--- ACTIVE PROFILE: TIME-OUT (Active for {int(state.state_manager.time_out_until - time.time())}s) ---")
                             elif chop_index > 50.0:
@@ -907,6 +907,7 @@ class MidasEngine(threading.Thread):
                                                                 'size': dynamic_size,
                                                                 'type': pos_type,
                                                                 'timestamp': state.state_manager.get_current_time().timestamp(),
+                                                                'real_timestamp': time.time(),
                                                                 'signal_timestamp': float(signal.get('timestamp', state.state_manager.get_current_time().timestamp())),
                                                                 'signal_id': signal.get('id', '')
                                                             }
