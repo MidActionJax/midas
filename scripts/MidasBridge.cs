@@ -46,7 +46,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.Configure)
             {
                 // Add a 15-minute data series in the background (Index 1)
-                AddDataSeries(BarsPeriodType.Minute, 15);
+                //AddDataSeries(BarsPeriodType.Minute, 15);
 
                 // --- Account Audit ---
                 foreach(Account a in Cbi.Account.All) { Print("AVAILABLE ACCOUNT: " + a.Name); }
@@ -71,8 +71,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                // Initialize the 15-period EMA on the 15-minute chart
-                ema15 = EMA(BarsArray[1], 15);
+                // Initialize the 15-period EMA on the 1-minute chart
+                ema15 = EMA(15);
 
                 server = new TcpListener(IPAddress.Any, ServerPort);
                 server.Start();

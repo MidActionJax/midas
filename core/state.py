@@ -64,6 +64,7 @@ class StateManager:
         self.stagnation_min_price = None
         self.stagnation_max_price = None
         self.consecutive_losses = 0
+        self.consecutive_loss_pnl = 0.0
         self.time_out_until = None
         self.current_fence_high = None
         self.current_fence_low = None
@@ -259,6 +260,7 @@ class StateManager:
             self.circuit_breaker_tripped = False
             self.closed_signals.clear()
             self.consecutive_losses = 0
+            self.consecutive_loss_pnl = 0.0
             self.time_out_until = None
             self.cvd_history.clear()
 

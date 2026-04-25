@@ -262,27 +262,40 @@ class MidasEngine(threading.Thread):
                             log_to_both(f"💓 [HEARTBEAT] {pos_symbol} {pos_type} | Profit: {points_profit:.2f} pts | SL: {pos.get('dynamic_sl', -1.0):.2f}")
                             pos['last_pnl_log_time'] = current_time
 
-                        # --- TASK 2: MICRO & STEP-BASED RATCHET ---
-                        breakeven_trigger = max(0.75, current_atr * 0.3)
-                        ratchet_trigger = max(1.25, current_atr * 0.5)
-                        trail_distance = max(0.75, current_atr * 0.3)
-
-                        # Continuous fluid trailing stop based on max_profit
-                        if pos['max_profit'] >= ratchet_trigger:
-                            new_sl = max(0.25, pos['max_profit'] - trail_distance)
+                        # --- TASK 2: TIERED RATCHET (GEARS) ---
+                        if pos['max_profit'] > 5.0 * current_atr:
+                            new_sl = pos['max_profit'] - (3.0 * current_atr)
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- FLUID RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] >= breakeven_trigger:
+                                log_to_both(f"--- GEAR 3 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        elif pos['max_profit'] > 3.0 * current_atr:
+                            new_sl = pos['max_profit'] - (1.5 * current_atr)
+                            if new_sl > pos['dynamic_sl']:
+                                pos['dynamic_sl'] = new_sl
+                                log_to_both(f"--- GEAR 2 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        elif pos['max_profit'] > 1.5 * current_atr:
                             new_sl = 0.25
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                                log_to_both(f"--- GEAR 1 AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
                                  
                         # Remove the hard ceiling
                         hit_tp = False 
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
+                        # --- WALL-BANGER TAKE PROFIT ---
+                        if points_profit >= 3.5:
+                            market_depth = state.state_manager.get_market_data(pos_symbol)
+                            if market_depth:
+                                floor_price, floor_vol, ceil_price, ceil_vol = logic.get_macro_box(market_depth, current_price)
+                                dynamic_wall = logic.get_dynamic_wall_threshold(market_depth)
+                                if is_long and (ceil_price - current_price) <= 1.0 and ceil_vol >= dynamic_wall:
+                                    hit_tp = True
+                                    log_to_both(f"--- WALL-BANGER TP: {pos_symbol} LONG hit Ceiling Wall at {ceil_price} ---")
+                                elif not is_long and (current_price - floor_price) <= 1.0 and floor_vol >= dynamic_wall:
+                                    hit_tp = True
+                                    log_to_both(f"--- WALL-BANGER TP: {pos_symbol} SHORT hit Floor Wall at {floor_price} ---")
+
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
                         current_market_ts = state.state_manager.get_current_time().timestamp()
                         time_open = current_market_ts - pos.get('timestamp', current_market_ts)
@@ -297,6 +310,20 @@ class MidasEngine(threading.Thread):
                         
                         stagnation_signal = logic.analyze_stagnation_exit(pos_symbol, current_price, pos)
                         
+                        # --- EMA TREND-RIDER ---
+                        ema_15 = None
+                        market_data = state.state_manager.get_market_data(pos_symbol)
+                        if market_data and 'ema_15' in market_data:
+                            ema_15 = market_data['ema_15']
+                        if ema_15 is None and hasattr(self.adapter, 'current_features'):
+                            ema_15 = self.adapter.current_features.get(f'ema_15_{pos_symbol.lower()}')
+                            
+                        if ema_15 is not None:
+                            riding_trend = (is_long and current_price >= ema_15) or (not is_long and current_price <= ema_15)
+                            if riding_trend:
+                                hit_time_kill = False
+                                stagnation_signal = None
+
                         if hit_tp or hit_sl or hit_time_kill or stagnation_signal:
                             if pos.get('exit_triggered'):
                                 pass  # Exit order already sent. Waiting for broker confirmation.
@@ -457,11 +484,15 @@ class MidasEngine(threading.Thread):
                         if final_pnl > 0:
                             state.state_manager.live_wins += 1
                             state.state_manager.consecutive_losses = 0
+                            state.state_manager.consecutive_loss_pnl = 0.0
                         elif final_pnl < 0:
                             state.state_manager.consecutive_losses += 1
-                            if state.state_manager.consecutive_losses >= 2:
-                                state.state_manager.time_out_until = time.time() + 3600
-                                log_to_both("!!! 60-MINUTE TIME-OUT ACTIVATED (2 Consecutive Losses) !!!")
+                            state.state_manager.consecutive_loss_pnl += final_pnl
+                            if state.state_manager.consecutive_loss_pnl <= -50.0 or state.state_manager.consecutive_losses >= 5:
+                                state.state_manager.time_out_until = time.time() + 900
+                                log_to_both("!!! 15-MINUTE SPEED BUMP ACTIVATED (Drawdown limit reached) !!!")
+                                state.state_manager.consecutive_losses = 0
+                                state.state_manager.consecutive_loss_pnl = 0.0
                                 
                         state.state_manager.account_balance += final_pnl
                     
