@@ -296,22 +296,9 @@ class MidasEngine(threading.Thread):
                                     hit_tp = True
                                     log_to_both(f"--- WALL-BANGER TP: {pos_symbol} SHORT hit Floor Wall at {floor_price} ---")
 
-                        # --- TASK 1: 45-SECOND KILL SWITCH ---
-                        current_market_ts = state.state_manager.get_current_time().timestamp()
-                        time_open = current_market_ts - pos.get('timestamp', current_market_ts)
-                        hit_time_kill = time_open >= 45 and points_profit <= 0
-                        
-                        # --- STAGNATION TIGHTENER ---
-                        if time_open > 120:
-                            new_sl = pos['max_profit'] - 1.5
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- STAGNATION TIGHTENER: {pos_symbol} SL moved to {new_sl:.2f} ---")
-                        
-                        stagnation_signal = logic.analyze_stagnation_exit(pos_symbol, current_price, pos)
-                        
                         # --- EMA TREND-RIDER ---
                         ema_15 = None
+                        riding_trend = False
                         market_data = state.state_manager.get_market_data(pos_symbol)
                         if market_data and 'ema_15' in market_data:
                             ema_15 = market_data['ema_15']
@@ -320,9 +307,22 @@ class MidasEngine(threading.Thread):
                             
                         if ema_15 is not None:
                             riding_trend = (is_long and current_price >= ema_15) or (not is_long and current_price <= ema_15)
-                            if riding_trend:
-                                hit_time_kill = False
-                                stagnation_signal = None
+
+                        # --- TASK 1: 45-SECOND KILL SWITCH ---
+                        current_market_ts = state.state_manager.get_current_time().timestamp()
+                        time_open = current_market_ts - pos.get('timestamp', current_market_ts)
+                        hit_time_kill = time_open >= 45 and points_profit <= 0 and not riding_trend
+                        
+                        # --- STAGNATION TIGHTENER ---
+                        if time_open > 120 and not riding_trend:
+                            new_sl = pos['max_profit'] - 1.5
+                            if new_sl > pos['dynamic_sl']:
+                                pos['dynamic_sl'] = new_sl
+                                log_to_both(f"--- STAGNATION TIGHTENER: {pos_symbol} SL moved to {new_sl:.2f} ---")
+                        
+                        stagnation_signal = logic.analyze_stagnation_exit(pos_symbol, current_price, pos)
+                        if riding_trend:
+                            stagnation_signal = None
 
                         if hit_tp or hit_sl or hit_time_kill or stagnation_signal:
                             if pos.get('exit_triggered'):
