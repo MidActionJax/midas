@@ -273,7 +273,7 @@ class MidasEngine(threading.Thread):
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
                                 log_to_both(f"--- GEAR 2 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] > 1.5 * current_atr:
+                        elif pos['max_profit'] > 1.0 * current_atr:
                             new_sl = 0.25
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
@@ -289,12 +289,12 @@ class MidasEngine(threading.Thread):
                             if market_depth:
                                 floor_price, floor_vol, ceil_price, ceil_vol = logic.get_macro_box(market_depth, current_price)
                                 dynamic_wall = logic.get_dynamic_wall_threshold(market_depth)
-                                if is_long and (ceil_price - current_price) <= 1.0 and ceil_vol >= dynamic_wall:
+                                if is_long and (ceil_price - current_price) <= 1.0 and ceil_vol >= dynamic_wall and state.state_manager.session_cvd > 10.0:
                                     hit_tp = True
-                                    log_to_both(f"--- WALL-BANGER TP: {pos_symbol} LONG hit Ceiling Wall at {ceil_price} ---")
-                                elif not is_long and (current_price - floor_price) <= 1.0 and floor_vol >= dynamic_wall:
+                                    log_to_both("!!! ABSORPTION EJECTOR: Buyers trapped at Ceiling Wall. Taking Profit! !!!")
+                                elif not is_long and (current_price - floor_price) <= 1.0 and floor_vol >= dynamic_wall and state.state_manager.session_cvd < -10.0:
                                     hit_tp = True
-                                    log_to_both(f"--- WALL-BANGER TP: {pos_symbol} SHORT hit Floor Wall at {floor_price} ---")
+                                    log_to_both("!!! ABSORPTION EJECTOR: Sellers trapped at Floor Wall. Taking Profit! !!!")
 
                         # --- EMA TREND-RIDER ---
                         ema_15 = None
@@ -581,11 +581,6 @@ class MidasEngine(threading.Thread):
                             if abs(price - last_price) / last_price > 0.05:
                                 print(f"❌ ANOMALY FIREWALL: Engine rejected cross-wired price for {symbol}. {last_price} -> {price}")
                                 continue
-
-                        if last_price is not None and symbol == 'MES':
-                            # Extract the volume of the last trade from the adapter
-                            volume = getattr(self.adapter, 'last_trade_volume', 1.0)
-                            state.state_manager.update_cvd(price, last_price, volume)
 
                         ema_15 = None
                         if hasattr(self.adapter, 'current_features'):
@@ -883,8 +878,21 @@ class MidasEngine(threading.Thread):
                                 else:
                                     log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Warming up volume memory...)")
 
+                                # 6. The Brake Pedal (Tight Sideways Chop)
+                                brake_pedal_pass = True
+                                current_chop = getattr(state.state_manager, 'current_chop_index', 50.0)
+                                if ema_15 is not None:
+                                    dist_to_ema_abs = abs(price - ema_15)
+                                    if current_chop > 55.0 and dist_to_ema_abs < 2.0:
+                                        brake_pedal_pass = False
+                                        log_to_both("[VETOED] BRAKE PEDAL ACTIVE: Market is chopping tightly around the EMA.")
+                                    else:
+                                        log_to_both("[CHECK] Brake Pedal: [PASS]")
+                                else:
+                                    log_to_both("[CHECK] Brake Pedal: [PASS] (No EMA)")
+
                                 # FINAL DECISION
-                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass):
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass and brake_pedal_pass):
                                     log_to_both("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
                                         continue

@@ -227,13 +227,12 @@ class StateManager:
         with self._lock:
             return list(self.active_positions)
 
-    def update_cvd(self, current_price, last_price, volume=1.0):
+    def update_cvd(self, side, volume):
         with self._lock:
-            price_delta = current_price - last_price
-            if price_delta > 0:
-                self.session_cvd += volume
-            elif price_delta < 0:
-                self.session_cvd -= volume
+            if side == 'BUY':
+                self.session_cvd += float(volume)
+            elif side in ['SELL', 'SHORT']:
+                self.session_cvd -= float(volume)
 
     def reset_cvd(self):
         with self._lock:

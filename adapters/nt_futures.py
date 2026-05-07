@@ -75,87 +75,94 @@ class NTFuturesAdapter:
                 try:
                     conn, addr = server_socket.accept()
                     try:
-                        data = conn.recv(1024).decode('utf-8')
+                        data = conn.recv(8192).decode('utf-8')
                         if data:
-                            message = json.loads(data)
+                            for line in data.split('\n'):
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                message = json.loads(line)
 
-                            chart_time = message.get('chart_time') or message.get('CHART_TIME')
-                            if chart_time:
-                                state_manager.update_market_time(chart_time)
+                                chart_time = message.get('chart_time') or message.get('CHART_TIME')
+                                if chart_time:
+                                    state_manager.update_market_time(chart_time)
 
-                            label = message.get('LABEL')
+                                label = message.get('LABEL')
 
-                            # --- EXISTING ACCOUNT LOGIC ---
-                            if label == 'ACCOUNT_UPDATE':
-                                state_manager.update_account_state(
-                                    balance=message.get('CASH_VALUE', message.get('ACCOUNT_VALUE', 0.0)),
-                                    pnl=message.get('DAILY_PNL', 0.0),
-                                    sync_time=datetime.now()
-                                )
-                                # --- TASK 1: LIVE POSITION SYNC ---
-                                pos_symbol = message.get('POSITION_SYMBOL')
-                                pos_qty = message.get('POSITION_QUANTITY')
-                                if pos_symbol is not None and pos_qty is not None:
-                                    if not hasattr(state_manager, 'live_nt_positions'):
-                                        state_manager.live_nt_positions = {}
-                                    state_manager.live_nt_positions[pos_symbol] = pos_qty
-                                    
-                                    # Sync state.active_positions if flat
-                                    if pos_qty == 0:
-                                        state_manager.is_reversing = False
+                                # --- EXISTING ACCOUNT LOGIC ---
+                                if label == 'ACCOUNT_UPDATE':
+                                    state_manager.update_account_state(
+                                        balance=message.get('CASH_VALUE', message.get('ACCOUNT_VALUE', 0.0)),
+                                        pnl=message.get('DAILY_PNL', 0.0),
+                                        sync_time=datetime.now()
+                                    )
+                                    # --- TASK 1: LIVE POSITION SYNC ---
+                                    pos_symbol = message.get('POSITION_SYMBOL')
+                                    pos_qty = message.get('POSITION_QUANTITY')
+                                    if pos_symbol is not None and pos_qty is not None:
+                                        if not hasattr(state_manager, 'live_nt_positions'):
+                                            state_manager.live_nt_positions = {}
+                                        state_manager.live_nt_positions[pos_symbol] = pos_qty
+                                        
+                                        # Sync state.active_positions if flat
+                                        if pos_qty == 0:
+                                            state_manager.is_reversing = False
 
-                            # --- NEW TAPE SCANNER LOGIC ---
-                            elif label == 'TRADE':
-                                # 1. Extract Symbol First
-                                symbol = message.get('SYMBOL')
-                                # 2. Save EMA to a Symbol-Specific Key
-                                ema_val = message.get('ema_15')
-                                if ema_val is not None and str(ema_val) != "null" and symbol:
-                                    self.current_features[f'ema_15_{symbol.lower()}'] = float(ema_val)
-                                if self.scanner:
+                                # --- NEW TAPE SCANNER LOGIC ---
+                                elif label == 'TRADE':
+                                    # 1. Extract Symbol First
                                     symbol = message.get('SYMBOL')
+                                    # 2. Save EMA to a Symbol-Specific Key
+                                    ema_val = message.get('ema_15')
+                                    if ema_val is not None and str(ema_val) != "null" and symbol:
+                                        self.current_features[f'ema_15_{symbol.lower()}'] = float(ema_val)
+                                        
                                     size = message.get('SIZE')
                                     side = message.get('SIDE')
-                                    self.scanner.add_trade(symbol, time.time(), size, side)
-                                    self.scanner.detect_rhythmic_patterns(symbol)
-                            # --- NEW RETURN PATH FOR FILLS ---
-                            elif label == 'MARKET_DEPTH':
-                                sym = message.get('SYMBOL')
-                                if sym:
-                                    if not hasattr(self, 'live_dom'):
-                                        self.live_dom = {}
-                                    self.live_dom[sym] = {
-                                        'bids': message.get('BIDS', []),
-                                        'asks': message.get('ASKS', []),
-                                        'chart_time': message.get('chart_time'),
-                                        'timestamp': message.get('timestamp')
-                                    }
-                            # --- NEW RETURN PATH FOR FILLS ---
-                            # --- NEW RETURN PATH FOR FILLS ---
-                            elif label == 'ORDER_FILL':
-                                print(f"--- ORDER FILL RECEIVED: {message} ---")
-                                
-                                # --- FAST SYNC LIVE POSITIONS ---
-                                sym = message.get('SYMBOL')
-                                side = message.get('SIDE', '').upper()
-                                qty = int(message.get('QUANTITY', 1))
-                                fill_price = message.get('PRICE')
+                                    if symbol == 'MES' and size and side:
+                                        state_manager.update_cvd(side.upper(), size)
+                                        
+                                    if self.scanner:
+                                        self.scanner.add_trade(symbol, time.time(), size, side)
+                                        self.scanner.detect_rhythmic_patterns(symbol)
+                                # --- NEW RETURN PATH FOR FILLS ---
+                                elif label == 'MARKET_DEPTH':
+                                    sym = message.get('SYMBOL')
+                                    if sym:
+                                        if not hasattr(self, 'live_dom'):
+                                            self.live_dom = {}
+                                        self.live_dom[sym] = {
+                                            'bids': message.get('BIDS', []),
+                                            'asks': message.get('ASKS', []),
+                                            'chart_time': message.get('chart_time'),
+                                            'timestamp': message.get('timestamp')
+                                        }
+                                # --- NEW RETURN PATH FOR FILLS ---
+                                # --- NEW RETURN PATH FOR FILLS ---
+                                elif label == 'ORDER_FILL':
+                                    print(f"--- ORDER FILL RECEIVED: {message} ---")
+                                    
+                                    # --- FAST SYNC LIVE POSITIONS ---
+                                    sym = message.get('SYMBOL')
+                                    side = message.get('SIDE', '').upper()
+                                    qty = int(message.get('QUANTITY', 1))
+                                    fill_price = message.get('PRICE')
 
-                                # Update the tracked position's true entry price
-                                # We keep this part so your PnL math in Python is accurate to the penny!
-                                if sym and fill_price:
-                                    tracked_positions = state_manager.get_active_positions()
-                                    for p in tracked_positions:
-                                        if p.get('symbol') == sym and not p.get('exit_triggered'):
-                                            p_type = p.get('type', '').upper()
-                                            is_long = 'BUY' in p_type or 'LONG' in p_type
-                                            is_short = 'SELL' in p_type or 'SHORT' in p_type
-                                            if (side == 'BUY' and is_long) or (side == 'SELL' and is_short):
-                                                p['entry_price'] = float(fill_price)
-                                                print(f"--- ACTUAL FILL PRICE UPDATED TO {fill_price} FOR {sym} ---")
-                                                break
-                                                    
-                                print(f"--- ACTIVE POSITION UPDATED: {sym} ---")
+                                    # Update the tracked position's true entry price
+                                    # We keep this part so your PnL math in Python is accurate to the penny!
+                                    if sym and fill_price:
+                                        tracked_positions = state_manager.get_active_positions()
+                                        for p in tracked_positions:
+                                            if p.get('symbol') == sym and not p.get('exit_triggered'):
+                                                p_type = p.get('type', '').upper()
+                                                is_long = 'BUY' in p_type or 'LONG' in p_type
+                                                is_short = 'SELL' in p_type or 'SHORT' in p_type
+                                                if (side == 'BUY' and is_long) or (side == 'SELL' and is_short):
+                                                    p['entry_price'] = float(fill_price)
+                                                    print(f"--- ACTUAL FILL PRICE UPDATED TO {fill_price} FOR {sym} ---")
+                                                    break
+                                                        
+                                    print(f"--- ACTIVE POSITION UPDATED: {sym} ---")
                     except json.JSONDecodeError:
                         pass
                     finally:
