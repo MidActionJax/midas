@@ -683,6 +683,7 @@ class MidasEngine(threading.Thread):
 
                             # --- AI SUPERVISOR (RL AGENT) ---
                             ai_action = 0 # 0=Hold, 1=Buy, 2=Sell
+                            ema_200 = None
                             if self.rl_model and len(state.state_manager.price_history.get(symbol, [])) > 0:
                                 current_price = state.state_manager.price_history[symbol][-1]
                                 
@@ -891,8 +892,28 @@ class MidasEngine(threading.Thread):
                                 else:
                                     log_to_both("[CHECK] Brake Pedal: [PASS] (No EMA)")
 
+                                # 7. The Macro Guard (The "Step Back")
+                                macro_pass = True
+                                
+                                # Ensure ema_200 is loaded if RL agent was skipped
+                                if ema_200 is None and hasattr(self.adapter, 'current_features'):
+                                    ema_200 = self.adapter.current_features.get('ema_200_val')
+                                
+                                # Only enforce the Macro Guard if we are in Trending Mode
+                                if ema_200 is not None and ema_200 != price and chop_index <= 50.0:
+                                    if signal_direction == 'LONG' and price < ema_200:
+                                        macro_pass = False
+                                        log_to_both(f"[CHECK] Macro Guard: [FAIL] (Price below 200 EMA. Vetoing counter-trend LONG)")
+                                    elif signal_direction == 'SHORT' and price > ema_200:
+                                        macro_pass = False
+                                        log_to_both(f"[CHECK] Macro Guard: [FAIL] (Price above 200 EMA. Vetoing counter-trend SHORT)")
+                                    else:
+                                        log_to_both(f"[CHECK] Macro Guard: [PASS] (Aligned with Macro Trend)")
+                                else:
+                                    log_to_both(f"[CHECK] Macro Guard: [PASS] (Chop Mode Active)")
+
                                 # FINAL DECISION
-                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass and brake_pedal_pass):
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass and brake_pedal_pass and macro_pass):
                                     log_to_both("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
                                         continue
