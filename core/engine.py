@@ -585,6 +585,12 @@ class MidasEngine(threading.Thread):
                                     'signal_id': signal_id
                                 }
                                 state.state_manager.add_position(position)
+                                
+                                # --- ENTRY TRIGGER: Start Log Capture for Manual Trade ---
+                                sig_id_str = str(signal_id)
+                                state.state_manager.active_trade_logs[sig_id_str] = list(state.state_manager.log_rolling_buffer)[-200:]
+                                log_to_both(f"--- LOG CAPTURE STARTED FOR MANUAL SIGNAL {sig_id_str} ---")
+                                
                                 log_to_both(f"✅ MANUAL {action} EXECUTED: {cmd_symbol} at {exec_price}")
                                 
                         elif action == 'FLATTEN':
@@ -596,15 +602,20 @@ class MidasEngine(threading.Thread):
                                 current_price = self.adapter.get_current_price(pos_symbol)
                                 if current_price:
                                     exit_size = pos.get('size', 1)
+                                    
+                                    # Tag for graceful engine exit and logging
+                                    pos['exit_triggered'] = True
+                                    pos['exit_time'] = time.time()
+                                    sig_id_to_send = pos.get('signal_id', pos.get('signal_timestamp'))
+                                    
                                     if pos_type == 'LONG':
-                                        self.adapter.execute_sell(pos_symbol, exit_size, current_price, signal_id=pos.get('signal_timestamp'))
+                                        self.adapter.execute_sell(pos_symbol, exit_size, current_price, signal_id=sig_id_to_send)
                                     else:
-                                        self.adapter.execute_buy(pos_symbol, exit_size, current_price, signal_id=pos.get('signal_timestamp'))
+                                        self.adapter.execute_buy(pos_symbol, exit_size, current_price, signal_id=sig_id_to_send)
                                         
                                     # --- REPLAY BYPASS: Force Broker Memory Wipe ---
                                     if hasattr(state.state_manager, 'live_nt_positions'):
                                         state.state_manager.live_nt_positions[pos_symbol] = 0
-                            state.state_manager.clear_active_positions()
                             
                         elif action == 'TOGGLE_HOLD':
                             state.state_manager.hold_override_active = not getattr(state.state_manager, 'hold_override_active', False)
@@ -1123,7 +1134,7 @@ class MidasEngine(threading.Thread):
                                                                     print(f"Logger warning: {e}")
                                                                 
                                                                 # --- ENTRY TRIGGER: Start Log Capture ---
-                                                                sig_id_str = str(position['signal_timestamp'])
+                                                                sig_id_str = str(position.get('signal_id', position.get('signal_timestamp')))
                                                                 state.state_manager.active_trade_logs[sig_id_str] = list(state.state_manager.log_rolling_buffer)[-200:]
                                                                 log_to_both(f"--- LOG CAPTURE STARTED FOR SIGNAL {sig_id_str} ---")
                                                             log_to_both(f"✅ AUTO-TRADE EXECUTED: {symbol} at {exec_price} ({pos_type})")
