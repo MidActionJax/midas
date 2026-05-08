@@ -1007,7 +1007,8 @@ class MidasEngine(threading.Thread):
                                     'macro_desc': macro_desc,
                                     'brake_desc': brake_desc,
                                     'pos_desc': pos_desc,
-                                    'vol_desc': vol_desc
+                                    'vol_desc': vol_desc,
+                                    'atr_value': float(current_atr) if current_atr is not None else 0.0
                                 }
                                 state.state_manager.latest_telemetry = telemetry_payload
 

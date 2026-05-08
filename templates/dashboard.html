@@ -219,8 +219,22 @@
             </div>
             
             <!-- TELEMETRY GLASS BOX PANEL -->
-            <div class="col-lg-4">
-                <div class="glass-box-panel h-100">
+            <div class="col-lg-4 d-flex flex-column gap-3">
+                <div class="glass-box-panel" id="market-pulse-card">
+                    <div class="glass-box-header text-center">&gt; MARKET PULSE_</div>
+                    <div class="d-flex justify-content-around mt-2">
+                        <div class="text-center">
+                            <div class="text-muted" style="font-size: 0.8em; letter-spacing: 1px;">AVG SWING</div>
+                            <div id="pulse-swing" class="fs-4 fw-bold status-wait">0.00 pts</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-muted" style="font-size: 0.8em; letter-spacing: 1px;">MOMENTUM</div>
+                            <div id="pulse-momentum" class="fs-4 fw-bold status-wait">UNKNOWN</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-box-panel flex-grow-1">
                     <div class="glass-box-header">&gt; SYSTEM TELEMETRY_</div>
                     <ul class="telemetry-checklist">
                         <li>&gt; Trend Filter <span id="tel-trend" class="status-wait">[WAIT]</span></li>
@@ -878,6 +892,26 @@
                         setStatus('tel-brake', tel.brake_desc !== undefined ? tel.brake_desc : tel.brake_pedal_pass);
                         setStatus('tel-macro', tel.macro_desc !== undefined ? tel.macro_desc : tel.macro_pass);
 
+                        // Market Pulse Logic
+                        const pulseSwing = document.getElementById('pulse-swing');
+                        const pulseMomentum = document.getElementById('pulse-momentum');
+                        
+                        if (pulseSwing && pulseMomentum) {
+                            pulseSwing.textContent = (tel.atr_value || 0).toFixed(2) + ' pts';
+                            pulseMomentum.textContent = tel.trend_desc || 'UNKNOWN';
+
+                            if (tel.trend_desc === 'BULLISH') {
+                                pulseSwing.className = 'fs-4 fw-bold status-pass';
+                                pulseMomentum.className = 'fs-4 fw-bold status-pass';
+                            } else if (tel.trend_desc === 'BEARISH') {
+                                pulseSwing.className = 'fs-4 fw-bold status-fail';
+                                pulseMomentum.className = 'fs-4 fw-bold status-fail';
+                            } else {
+                                pulseSwing.className = 'fs-4 fw-bold status-warn';
+                                pulseMomentum.className = 'fs-4 fw-bold status-warn';
+                            }
+                        }
+
                         const mlConf = tel.ml_confidence || 0.0;
                         document.getElementById('ml-progress-fill').style.width = Math.min(100, mlConf) + '%';
                         document.getElementById('ml-progress-text').textContent = mlConf.toFixed(2) + '%';
@@ -898,6 +932,15 @@
                         ['tel-trend', 'tel-vol', 'tel-ml', 'tel-rl', 'tel-pos', 'tel-cvd', 'tel-brake', 'tel-macro'].forEach(resetStatus);
                         document.getElementById('ml-progress-fill').style.width = '0%';
                         document.getElementById('ml-progress-text').textContent = '0.00%';
+                        
+                        const pulseSwing = document.getElementById('pulse-swing');
+                        const pulseMomentum = document.getElementById('pulse-momentum');
+                        if (pulseSwing && pulseMomentum) {
+                            pulseSwing.className = 'fs-4 fw-bold status-wait';
+                            pulseMomentum.className = 'fs-4 fw-bold status-wait';
+                            pulseSwing.textContent = '0.00 pts';
+                            pulseMomentum.textContent = 'UNKNOWN';
+                        }
                     }
                 })
                 .catch(e => {
@@ -1031,6 +1074,25 @@
                 this.textContent = 'HOLD RUNNER: OFF';
             }
             sendManualOverride('TOGGLE_HOLD');
+        });
+
+        // Keyboard Shortcut for Approval (Space or Enter)
+        document.addEventListener('keydown', function(e) {
+            // Ignore if user is interacting with an input field (like changing contract qty or toggling switches)
+            if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+                return;
+            }
+
+            if (e.code === 'Space' || e.code === 'Enter') {
+                const queueDiv = document.getElementById('approval-queue-section');
+                if (queueDiv && queueDiv.style.display !== 'none') {
+                    const approveBtn = document.querySelector('#approval-queue-cards .btn-success');
+                    if (approveBtn) {
+                        e.preventDefault(); // Prevent page scrolling on Space
+                        approveBtn.click();
+                    }
+                }
+            }
         });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
