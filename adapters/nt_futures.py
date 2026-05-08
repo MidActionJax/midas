@@ -75,7 +75,7 @@ class NTFuturesAdapter:
                 try:
                     conn, addr = server_socket.accept()
                     try:
-                        data = conn.recv(8192).decode('utf-8')
+                        data = conn.recv(1048576).decode('utf-8')
                         if data:
                             for line in data.split('\n'):
                                 line = line.strip()

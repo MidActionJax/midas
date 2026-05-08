@@ -434,4 +434,7 @@ Goal: Allow the user to front-run the AI while forcing the bot to act as a stric
 DROPDOWN FOR CONTRACT NUMBER 
 as long as im tabbed on the screen space or enter = approved
 AVERAGE SWINGS?? HOW MNAY POINTS IS IT AVERAGEING 3 point swings? more??
+
+CONTAMINATION RESET!!!
+LOGGING!!!
 ---

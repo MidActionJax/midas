@@ -311,7 +311,7 @@ class MidasEngine(threading.Thread):
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
                         current_market_ts = state.state_manager.get_current_time().timestamp()
                         time_open = current_market_ts - pos.get('timestamp', current_market_ts)
-                        hit_time_kill = time_open >= 45 and points_profit <= 0 and not riding_trend
+                        hit_time_kill = time_open >= 45 and points_profit <= 0 and not riding_trend and not getattr(state.state_manager, 'hold_override_active', False)
                         
                         # --- STAGNATION TIGHTENER ---
                         if time_open > 120 and not riding_trend:
@@ -321,6 +321,8 @@ class MidasEngine(threading.Thread):
                                 log_to_both(f"--- STAGNATION TIGHTENER: {pos_symbol} SL moved to {new_sl:.2f} ---")
                         
                         stagnation_signal = logic.analyze_stagnation_exit(pos_symbol, current_price, pos)
+                        if getattr(state.state_manager, 'hold_override_active', False):
+                            stagnation_signal = None
                         if riding_trend:
                             stagnation_signal = None
 
@@ -544,6 +546,69 @@ class MidasEngine(threading.Thread):
                     if self.is_paused:
                         time.sleep(1)
                         continue
+
+                    # --- PROCESS MANUAL COMMANDS ---
+                    while state.state_manager.manual_command_queue:
+                        cmd = state.state_manager.manual_command_queue.pop(0)
+                        action = cmd.get('action')
+                        cmd_symbol = cmd.get('symbol', config.TRADING_SYMBOL)
+                        qty = cmd.get('qty', 1)
+                        
+                        if action in ['BUY', 'SHORT']:
+                            exec_price = self.adapter.get_current_price(cmd_symbol)
+                            signal_id = f"MANUAL_{int(time.time())}"
+                            
+                            if action == 'BUY':
+                                trade_executed = self.adapter.execute_buy(cmd_symbol, qty, exec_price, signal_id=signal_id)
+                                pos_type = 'BUY'
+                            else:
+                                trade_executed = self.adapter.execute_sell(cmd_symbol, qty, exec_price, signal_id=signal_id, side='SHORT')
+                                pos_type = 'SHORT'
+                                
+                            if trade_executed:
+                                # --- REPLAY BYPASS: Force Broker Memory Update ---
+                                if not hasattr(state.state_manager, 'live_nt_positions'):
+                                    state.state_manager.live_nt_positions = {}
+                                current_qty = state.state_manager.live_nt_positions.get(cmd_symbol, 0)
+                                if pos_type == 'SHORT':
+                                    state.state_manager.live_nt_positions[cmd_symbol] = current_qty - qty
+                                else:
+                                    state.state_manager.live_nt_positions[cmd_symbol] = current_qty + qty
+                                position = {
+                                    'symbol': cmd_symbol,
+                                    'entry_price': exec_price,
+                                    'size': qty,
+                                    'type': pos_type,
+                                    'timestamp': state.state_manager.get_current_time().timestamp(),
+                                    'real_timestamp': time.time(),
+                                    'signal_timestamp': time.time(),
+                                    'signal_id': signal_id
+                                }
+                                state.state_manager.add_position(position)
+                                log_to_both(f"✅ MANUAL {action} EXECUTED: {cmd_symbol} at {exec_price}")
+                                
+                        elif action == 'FLATTEN':
+                            log_to_both("✅ MANUAL FLATTEN EXECUTED")
+                            tracked_positions = state.state_manager.get_active_positions()
+                            for pos in list(tracked_positions):
+                                pos_symbol = pos.get('symbol', cmd_symbol)
+                                pos_type = 'LONG' if 'BUY' in pos.get('type', 'BUY').upper() else 'SHORT'
+                                current_price = self.adapter.get_current_price(pos_symbol)
+                                if current_price:
+                                    exit_size = pos.get('size', 1)
+                                    if pos_type == 'LONG':
+                                        self.adapter.execute_sell(pos_symbol, exit_size, current_price, signal_id=pos.get('signal_timestamp'))
+                                    else:
+                                        self.adapter.execute_buy(pos_symbol, exit_size, current_price, signal_id=pos.get('signal_timestamp'))
+                                        
+                                    # --- REPLAY BYPASS: Force Broker Memory Wipe ---
+                                    if hasattr(state.state_manager, 'live_nt_positions'):
+                                        state.state_manager.live_nt_positions[pos_symbol] = 0
+                            state.state_manager.clear_active_positions()
+                            
+                        elif action == 'TOGGLE_HOLD':
+                            state.state_manager.hold_override_active = not getattr(state.state_manager, 'hold_override_active', False)
+                            log_to_both(f"✅ MANUAL HOLD TOGGLED: {state.state_manager.hold_override_active}")
 
                     state.state_manager.cleanup_pending_signals()
 

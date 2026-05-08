@@ -71,6 +71,8 @@ class StateManager:
         self.ignore_scheduler = False
         self.log_rolling_buffer = deque(maxlen=1000)
         self.active_trade_logs = {}
+        self.manual_command_queue = []
+        self.hold_override_active = False
         self.load_price_history()
 
     def toggle_dev_mode(self):

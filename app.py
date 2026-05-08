@@ -359,6 +359,16 @@ def toggle_scheduler():
     state.state_manager.ignore_scheduler = not getattr(state.state_manager, 'ignore_scheduler', False)
     return jsonify({'status': 'success', 'ignore_scheduler': state.state_manager.ignore_scheduler})
 
+@app.route('/api/manual_override', methods=['POST'])
+@login_required
+def manual_override():
+    data = request.get_json()
+    action = data.get('action')
+    if action in ['BUY', 'SHORT', 'FLATTEN', 'TOGGLE_HOLD']:
+        state.state_manager.manual_command_queue.append(data)
+        return jsonify({'status': 'success', 'message': f'Manual action {action} queued.'})
+    return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
+
 @app.route('/approve_signal/<string:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):
