@@ -19,6 +19,69 @@
             animation: glow 1.5s infinite ease-in-out;
         }
     </style> -->
+    <style>
+        /* --- GLASS BOX TELEMETRY PANEL --- */
+        .glass-box-panel {
+            background-color: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            color: #c8c8c8;
+            box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 255, 204, 0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .glass-box-header {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #00ffcc;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+            text-shadow: 0 0 5px rgba(0, 255, 204, 0.4);
+            letter-spacing: 1px;
+        }
+
+        .telemetry-checklist {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            font-size: 0.85em;
+        }
+
+        .telemetry-checklist li {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px dashed #222;
+        }
+
+        /* Status Indication Classes */
+        .status-pass { color: #00ff00; text-shadow: 0 0 8px #00ff00; font-weight: bold; }
+        .status-fail { color: #ff0044; text-shadow: 0 0 8px #ff0044; font-weight: bold; }
+        .status-warn { color: #ffc107; text-shadow: 0 0 8px #ffc107; font-weight: bold; }
+        .status-wait { color: #555; }
+
+        /* ML Confidence Meter */
+        .ml-meter-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .ml-meter-label { font-size: 0.8em; color: #888; }
+        .progress-bar-bg {
+            background-color: #1a1a1a; border: 1px solid #444; height: 18px; border-radius: 3px; position: relative; overflow: hidden;
+        }
+        .progress-bar-fill {
+            background-color: #00ffcc; height: 100%; width: 0%; transition: width 0.3s ease-out, background-color 0.3s ease-out; box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.3);
+        }
+        .ml-meter-text {
+            text-align: right; font-size: 0.9em; font-weight: bold; color: #00ffcc; text-shadow: 0 0 5px rgba(0, 255, 204, 0.4);
+        }
+    </style>
 </head>
 <body>
     <div class="container mt-5">
@@ -93,11 +156,39 @@
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
 
-        <!-- Equity Growth Chart -->
-        <div class="glass-panel mb-4 p-3" style="border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; background: rgba(0,0,0,0.5);">
-            <h5 style="color: #00FF41; text-shadow: 0 0 5px #00FF41; margin-bottom: 15px;">Equity Growth</h5>
-            <div style="height: 250px; width: 100%;">
-                <canvas id="equityChart"></canvas>
+        <div class="row mb-4">
+            <!-- Equity Growth Chart -->
+            <div class="col-lg-8">
+                <div class="glass-panel p-3 h-100" style="border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; background: rgba(0,0,0,0.5);">
+                    <h5 style="color: #00FF41; text-shadow: 0 0 5px #00FF41; margin-bottom: 15px;">Equity Growth</h5>
+                    <div style="height: 250px; width: 100%;">
+                        <canvas id="equityChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- TELEMETRY GLASS BOX PANEL -->
+            <div class="col-lg-4">
+                <div class="glass-box-panel h-100">
+                    <div class="glass-box-header">&gt; SYSTEM TELEMETRY_</div>
+                    <ul class="telemetry-checklist">
+                        <li>&gt; Trend Filter <span id="tel-trend" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Volatility Filter <span id="tel-vol" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; ML Confidence <span id="tel-ml" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; RL Supervisor <span id="tel-rl" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Pos Guards <span id="tel-pos" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Micro-CVD Guard <span id="tel-cvd" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Brake Pedal <span id="tel-brake" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Macro Guard <span id="tel-macro" class="status-wait">[WAIT]</span></li>
+                    </ul>
+                    <div class="ml-meter-container mt-auto">
+                        <div class="ml-meter-label">&gt; ML CONFIDENCE TRIGGER</div>
+                        <div class="progress-bar-bg">
+                            <div id="ml-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div id="ml-progress-text" class="ml-meter-text">0.00%</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -697,6 +788,65 @@
                     }
                     if (isAligned) {
                         nasdaqStatus.classList.add('glow');
+                    }
+
+                    // 7. Glass Box Telemetry
+                    if (data.latest_telemetry) {
+                        const tel = data.latest_telemetry;
+                        
+                        const setStatus = (id, value) => {
+                            const el = document.getElementById(id);
+                            if (typeof value === 'boolean') {
+                                if (value) {
+                                    el.className = 'status-pass';
+                                    el.textContent = '[ ✓ ] PASS';
+                                } else {
+                                    el.className = 'status-fail';
+                                    el.textContent = '[ X ] FAIL';
+                                }
+                            } else {
+                                el.textContent = `[ ${value} ]`;
+                                if (['BULLISH', 'UPTREND', 'CLEAR', 'READY', 'HEALTHY'].includes(value)) {
+                                    el.className = 'status-pass';
+                                } else if (['BEARISH', 'DOWNTREND'].includes(value)) {
+                                    el.className = 'status-fail';
+                                } else if (['ENGAGED', 'LOCKED', 'LOW VOL', 'CHOP'].includes(value)) {
+                                    el.className = 'status-warn';
+                                } else {
+                                    el.className = 'status-wait';
+                                }
+                            }
+                        };
+
+                        setStatus('tel-trend', tel.trend_desc !== undefined ? tel.trend_desc : tel.trend_pass);
+                        setStatus('tel-vol', tel.vol_desc !== undefined ? tel.vol_desc : tel.vol_pass);
+                        setStatus('tel-ml', tel.ml_pass);
+                        setStatus('tel-rl', tel.rl_pass);
+                        setStatus('tel-pos', tel.pos_desc !== undefined ? tel.pos_desc : tel.pos_guard_pass);
+                        setStatus('tel-cvd', tel.cvd_pass);
+                        setStatus('tel-brake', tel.brake_desc !== undefined ? tel.brake_desc : tel.brake_pedal_pass);
+                        setStatus('tel-macro', tel.macro_desc !== undefined ? tel.macro_desc : tel.macro_pass);
+
+                        const mlConf = tel.ml_confidence || 0.0;
+                        document.getElementById('ml-progress-fill').style.width = Math.min(100, mlConf) + '%';
+                        document.getElementById('ml-progress-text').textContent = mlConf.toFixed(2) + '%';
+                        
+                        if (mlConf >= 80.0) {
+                            document.getElementById('ml-progress-fill').style.backgroundColor = '#00ff00';
+                            document.getElementById('ml-progress-fill').style.boxShadow = '0 0 10px #00ff00';
+                        } else {
+                            document.getElementById('ml-progress-fill').style.backgroundColor = '#00ffcc';
+                            document.getElementById('ml-progress-fill').style.boxShadow = 'inset 0 0 8px rgba(255, 255, 255, 0.3)';
+                        }
+                    } else {
+                        const resetStatus = (id) => {
+                            const el = document.getElementById(id);
+                            el.className = 'status-wait';
+                            el.textContent = '[WAIT]';
+                        };
+                        ['tel-trend', 'tel-vol', 'tel-ml', 'tel-rl', 'tel-pos', 'tel-cvd', 'tel-brake', 'tel-macro'].forEach(resetStatus);
+                        document.getElementById('ml-progress-fill').style.width = '0%';
+                        document.getElementById('ml-progress-text').textContent = '0.00%';
                     }
                 })
                 .catch(e => {

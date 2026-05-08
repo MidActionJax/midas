@@ -238,7 +238,8 @@ def status():
         'chop_index': state.state_manager.current_chop_index,
         'correlation_score': correlation_score,
         'pnl_labels': pnl_labels,
-        'pnl_history': pnl_history
+        'pnl_history': pnl_history,
+        'latest_telemetry': getattr(state.state_manager, 'latest_telemetry', None)
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():

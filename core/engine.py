@@ -913,6 +913,39 @@ class MidasEngine(threading.Thread):
                                     log_to_both(f"[CHECK] Macro Guard: [PASS] (Chop Mode Active)")
 
                                 # FINAL DECISION
+                                trend_desc = 'BULLISH' if market_trend == 'BULLISH' else 'BEARISH'
+                                
+                                if chop_index > 50.0:
+                                    macro_desc = 'CHOP'
+                                elif ema_200 is not None and price > ema_200:
+                                    macro_desc = 'UPTREND'
+                                elif ema_200 is not None and price < ema_200:
+                                    macro_desc = 'DOWNTREND'
+                                else:
+                                    macro_desc = 'UNKNOWN'
+                                    
+                                brake_desc = 'CLEAR' if brake_pedal_pass else 'ENGAGED'
+                                pos_desc = 'READY' if pos_guard_pass else 'LOCKED'
+                                vol_desc = 'HEALTHY' if vol_pass else 'LOW VOL'
+
+                                telemetry_payload = {
+                                    'trend_pass': trend_pass,
+                                    'vol_pass': vol_pass,
+                                    'ml_pass': ml_pass,
+                                    'rl_pass': rl_pass,
+                                    'pos_guard_pass': pos_guard_pass,
+                                    'cvd_pass': cvd_pass,
+                                    'brake_pedal_pass': brake_pedal_pass,
+                                    'macro_pass': macro_pass,
+                                    'ml_confidence': float(ml_val) if ml_val is not None else 0.0,
+                                    'trend_desc': trend_desc,
+                                    'macro_desc': macro_desc,
+                                    'brake_desc': brake_desc,
+                                    'pos_desc': pos_desc,
+                                    'vol_desc': vol_desc
+                                }
+                                state.state_manager.latest_telemetry = telemetry_payload
+
                                 if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass and brake_pedal_pass and macro_pass):
                                     log_to_both("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
