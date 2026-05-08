@@ -667,6 +667,18 @@ class MidasEngine(threading.Thread):
                         if chart_time:
                             state.state_manager.update_market_time(chart_time)
 
+                        # --- 🌅 THE CONTAMINATION RESET (8:45 AM EST) ---
+                        if state.state_manager.current_market_time:
+                            cmt = state.state_manager.current_market_time
+                            current_date_str = cmt.strftime("%Y-%m-%d")
+                            
+                            if (cmt.hour == 8 and cmt.minute >= 45) or cmt.hour > 8:
+                                if getattr(self, 'last_reset_date', None) != current_date_str:
+                                    log_to_both("--- 🌅 DAILY AUTO-RESET: Clearing PnL and Anchors for the New Day (8:45 AM EST) ---")
+                                    state.state_manager.reset_for_new_day()
+                                    state.state_manager.reset_daily_anchors()
+                                    self.last_reset_date = current_date_str
+
                         current_session = logic.get_market_session()
                         
                         # 🛑 THE GATEKEEPER: Only let MES update the Floor and Ceiling
