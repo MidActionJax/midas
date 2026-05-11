@@ -9,6 +9,7 @@ using System.Threading;
 using System.Linq;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
+using System.Collections.Generic;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
@@ -22,12 +23,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int AccountPort = 36970;
         private string lastChartTime = DateTime.Now.ToString("o");
         private DateTime lastDepthUpdate = DateTime.MinValue;
+        private DateTime lastDomUpdate = DateTime.MinValue;
+        private DateTime lastTapeUpdate = DateTime.MinValue;
         private EMA ema15; 
         private double currentBidVol = 0;
         private double currentAskVol = 0;
         private TcpClient pythonClient;
         private NetworkStream pythonStream;
-
 
         protected override void OnStateChange()
         {
@@ -44,7 +46,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (State == State.Configure)
             {
                 // Add a 15-minute data series in the background (Index 1)
-                AddDataSeries(BarsPeriodType.Minute, 15);
+                //AddDataSeries(BarsPeriodType.Minute, 15);
 
                 // --- Account Audit ---
                 foreach(Account a in Cbi.Account.All) { Print("AVAILABLE ACCOUNT: " + a.Name); }
@@ -69,8 +71,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                // Initialize the 15-period EMA on the 15-minute chart
-                ema15 = EMA(BarsArray[1], 15);
+                // Initialize the 15-period EMA on the 1-minute chart
+                ema15 = EMA(15);
 
                 server = new TcpListener(IPAddress.Any, ServerPort);
                 server.Start();
@@ -122,6 +124,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         string json = "{" +
                             "\"LABEL\":\"ACCOUNT_UPDATE\"," +
                             "\"chart_time\":\"" + lastChartTime + "\"," +
+                            "\"timestamp\":\"" + lastChartTime + "\"," +
                             "\"ACCOUNT_VALUE\":" + balance + "," +
                             "\"DAILY_PNL\":" + currentPnl + "," +
                             "\"CASH_VALUE\":" + balance + "," +
@@ -283,10 +286,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             // We only care about Last trades (the Tape)
             else if (marketDataUpdate.MarketDataType == NinjaTrader.Data.MarketDataType.Last)
             {
-                if ((DateTime.Now - lastDepthUpdate).TotalMilliseconds < 250)
+                // FINAL ARMOR: Rate limit the live tape to 10 updates/sec to prevent socket flood,
+                // but allow full data firehose for 100% accurate replay backtesting.
+                if (State == State.Realtime && (DateTime.Now - lastTapeUpdate).TotalMilliseconds < 100)
                     return;
-
-                lastDepthUpdate = DateTime.Now;
+                
+                lastTapeUpdate = DateTime.Now;
 
                 try
                 {
@@ -303,6 +308,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     string json = "{" +
                         "\"LABEL\":\"TRADE\"," +
                         "\"chart_time\":\"" + lastChartTime + "\"," +
+                        "\"timestamp\":\"" + lastChartTime + "\"," +
                         "\"SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
                         "\"SIZE\":" + marketDataUpdate.Volume + "," +
                         "\"PRICE\":" + marketDataUpdate.Price + "," +
@@ -319,6 +325,50 @@ namespace NinjaTrader.NinjaScript.Indicators
                     // Print("TAPE ERROR: " + ex.Message);
                 }
             }
+        }
+
+        protected override void OnMarketDepth(MarketDepthEventArgs marketDepthUpdate)
+        {
+            if (State == State.Historical) return;
+
+            // Limit DOM updates to 4 times a SIMULATED second (250ms) so Replay matches Live perfectly
+            if (marketDepthUpdate.Instrument.MarketDepth == null) return;
+                
+            lastDomUpdate = marketDepthUpdate.Time;
+            lastChartTime = marketDepthUpdate.Time.ToString("o");
+            
+            string bidsJson = "[";
+            string asksJson = "[";
+            
+            for (int i = 0; i < Math.Min(5, marketDepthUpdate.Instrument.MarketDepth.Bids.Count); i++)
+                bidsJson += string.Format("[{0}, {1}],", marketDepthUpdate.Instrument.MarketDepth.Bids[i].Price, marketDepthUpdate.Instrument.MarketDepth.Bids[i].Volume);
+            
+            for (int i = 0; i < Math.Min(5, marketDepthUpdate.Instrument.MarketDepth.Asks.Count); i++)
+                asksJson += string.Format("[{0}, {1}],", marketDepthUpdate.Instrument.MarketDepth.Asks[i].Price, marketDepthUpdate.Instrument.MarketDepth.Asks[i].Volume);
+                
+            bidsJson = bidsJson.TrimEnd(',') + "]";
+            if (bidsJson == "]") bidsJson = "[]";
+            
+            asksJson = asksJson.TrimEnd(',') + "]";
+            if (asksJson == "]") asksJson = "[]";
+
+            string emaValue = "null";
+            if (ema15 != null && ema15.IsValidDataPoint(0)) 
+            {
+                emaValue = ema15[0].ToString("F2");
+            }
+
+            string json = "{" +
+                "\"LABEL\":\"MARKET_DEPTH\"," +
+                "\"chart_time\":\"" + lastChartTime + "\"," +
+                "\"timestamp\":\"" + lastChartTime + "\"," +
+                "\"SYMBOL\":\"" + Instrument.MasterInstrument.Name + "\"," +
+                "\"BIDS\":" + bidsJson + "," +
+                "\"ASKS\":" + asksJson + "," +
+                "\"ema_15\":" + emaValue +
+            "}";
+
+            SendDataToPython(json);
         }
 
         protected override void OnBarUpdate() 

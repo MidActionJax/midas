@@ -64,12 +64,15 @@ class StateManager:
         self.stagnation_min_price = None
         self.stagnation_max_price = None
         self.consecutive_losses = 0
+        self.consecutive_loss_pnl = 0.0
         self.time_out_until = None
         self.current_fence_high = None
         self.current_fence_low = None
         self.ignore_scheduler = False
         self.log_rolling_buffer = deque(maxlen=1000)
         self.active_trade_logs = {}
+        self.manual_command_queue = []
+        self.hold_override_active = False
         self.load_price_history()
 
     def toggle_dev_mode(self):
@@ -131,13 +134,38 @@ class StateManager:
     def update_market_time(self, time_string):
         """Parses the incoming NT8 time string into a timezone-aware datetime object (US/Eastern)."""
         with self._lock:
+            if not time_string or str(time_string).strip() in ["", "null"]:
+                return
             try:
-                dt = pd.to_datetime(time_string)
-                if dt.tzinfo is None:
-                    dt = dt.tz_localize('US/Eastern')
+                try:
+                    from zoneinfo import ZoneInfo
+                except ImportError:
+                    from backports.zoneinfo import ZoneInfo
+
+                # 1. Handle numeric UNIX timestamps (if NT8 or the bridge sends ticks/ms instead of a string)
+                if isinstance(time_string, (int, float)) or (isinstance(time_string, str) and time_string.replace('.', '', 1).isdigit()):
+                    ts = float(time_string)
+                    # Pandas needs to know if the timestamp is in seconds or milliseconds
+                    dt = pd.to_datetime(ts, unit='ms' if ts > 1e11 else 's', utc=True)
+                    # UNIX timestamps are universally UTC, so bypass Arizona and convert directly to Eastern
+                    dt_correct = dt.tz_convert('US/Eastern')
                 else:
-                    dt = dt.tz_convert('US/Eastern')
-                self.current_market_time = dt.to_pydatetime()
+                    # 2. Handle standard NinjaTrader string formats
+                    dt = pd.to_datetime(time_string)
+                    if pd.isna(dt):
+                        return
+                    
+                    # --- SURGICAL TIMEZONE FIX ---
+                    # Localize as Arizona (MST) first, then convert to Eastern (EST/EDT)
+                    if dt.tzinfo is not None:
+                        dt_correct = dt.tz_convert('US/Eastern')
+                    else:
+                        # If user is in AZ, localize as AZ then convert to NY
+                        dt_correct = dt.tz_localize('US/Arizona').tz_convert('US/Eastern')
+                
+                # Convert to standard pydatetime and explicitly use ZoneInfo to prevent comparison errors in session logic
+                dt_pydatetime = dt_correct.to_pydatetime()
+                self.current_market_time = dt_pydatetime.replace(tzinfo=None).replace(tzinfo=ZoneInfo('US/Eastern'))
             except Exception as e:
                 print(f"Error parsing market time {time_string}: {e}")
 
@@ -170,7 +198,7 @@ class StateManager:
             from backports.zoneinfo import ZoneInfo
             
         if self.current_market_time:
-            return self.current_market_time + timedelta(hours=3)
+            return self.current_market_time
         else:
             utc_now = datetime.now(timezone.utc)
             return utc_now.astimezone(ZoneInfo('US/Eastern'))
@@ -178,8 +206,8 @@ class StateManager:
     def remove_pending_signal(self, signal_to_remove):
         with self._lock:
             # Rebuilding list without the removed signal
-            target_id = str(signal_to_remove['timestamp'])
-            self.pending_signals = [s for s in self.pending_signals if str(s['timestamp']) != target_id]
+            target_id = str(signal_to_remove.get('id', signal_to_remove.get('timestamp')))
+            self.pending_signals = [s for s in self.pending_signals if str(s.get('id', s.get('timestamp'))) != target_id]
 
     def add_position(self, pos):
         with self._lock:
@@ -201,13 +229,12 @@ class StateManager:
         with self._lock:
             return list(self.active_positions)
 
-    def update_cvd(self, current_price, last_price, volume=1.0):
+    def update_cvd(self, side, volume):
         with self._lock:
-            price_delta = current_price - last_price
-            if price_delta > 0:
-                self.session_cvd += volume
-            elif price_delta < 0:
-                self.session_cvd -= volume
+            if side == 'BUY':
+                self.session_cvd += float(volume)
+            elif side in ['SELL', 'SHORT']:
+                self.session_cvd -= float(volume)
 
     def reset_cvd(self):
         with self._lock:
@@ -234,6 +261,7 @@ class StateManager:
             self.circuit_breaker_tripped = False
             self.closed_signals.clear()
             self.consecutive_losses = 0
+            self.consecutive_loss_pnl = 0.0
             self.time_out_until = None
             self.cvd_history.clear()
 

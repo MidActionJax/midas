@@ -19,6 +19,95 @@
             animation: glow 1.5s infinite ease-in-out;
         }
     </style> -->
+    <style>
+        /* --- GLASS BOX TELEMETRY PANEL --- */
+        .glass-box-panel {
+            background-color: #0a0a0a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            color: #c8c8c8;
+            box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 255, 204, 0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .glass-box-header {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #00ffcc;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+            text-shadow: 0 0 5px rgba(0, 255, 204, 0.4);
+            letter-spacing: 1px;
+        }
+
+        .telemetry-checklist {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            font-size: 0.85em;
+        }
+
+        .telemetry-checklist li {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px dashed #222;
+        }
+
+        /* Status Indication Classes */
+        .status-pass { color: #00ff00; text-shadow: 0 0 8px #00ff00; font-weight: bold; }
+        .status-fail { color: #ff0044; text-shadow: 0 0 8px #ff0044; font-weight: bold; }
+        .status-warn { color: #ffc107; text-shadow: 0 0 8px #ffc107; font-weight: bold; }
+        .status-wait { color: #555; }
+
+        /* ML Confidence Meter */
+        .ml-meter-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .ml-meter-label { font-size: 0.8em; color: #888; }
+        .progress-bar-bg {
+            background-color: #1a1a1a; border: 1px solid #444; height: 18px; border-radius: 3px; position: relative; overflow: hidden;
+        }
+        .progress-bar-fill {
+            background-color: #00ffcc; height: 100%; width: 0%; transition: width 0.3s ease-out, background-color 0.3s ease-out; box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.3);
+        }
+        .ml-meter-text {
+            text-align: right; font-size: 0.9em; font-weight: bold; color: #00ffcc; text-shadow: 0 0 5px rgba(0, 255, 204, 0.4);
+        }
+        
+        /* --- BIONIC CONSOLE --- */
+        .btn-bionic-buy {
+            background-color: transparent; color: #00FF41; border: 2px solid #00FF41; box-shadow: 0 0 8px rgba(0, 255, 65, 0.4); transition: all 0.2s;
+        }
+        .btn-bionic-buy:hover {
+            background-color: #00FF41; color: #000; box-shadow: 0 0 15px #00FF41;
+        }
+        .btn-bionic-sell {
+            background-color: transparent; color: #FF073A; border: 2px solid #FF073A; box-shadow: 0 0 8px rgba(255, 7, 58, 0.4); transition: all 0.2s;
+        }
+        .btn-bionic-sell:hover {
+            background-color: #FF073A; color: #000; box-shadow: 0 0 15px #FF073A;
+        }
+        .btn-bionic-hold {
+            background-color: transparent; color: #00FFFF; border: 2px solid #00FFFF; box-shadow: 0 0 8px rgba(0, 255, 255, 0.4); transition: all 0.2s;
+        }
+        .btn-bionic-hold.active {
+            background-color: #00FFFF; color: #000; box-shadow: 0 0 15px #00FFFF;
+        }
+        .btn-bionic-flatten {
+            background-color: transparent; color: #FF8C00; border: 2px solid #FF8C00; box-shadow: 0 0 8px rgba(255, 140, 0, 0.4); transition: all 0.2s;
+        }
+        .btn-bionic-flatten:hover {
+            background-color: #FF8C00; color: #000; box-shadow: 0 0 15px #FF8C00;
+        }
+    </style>
 </head>
 <body>
     <div class="container mt-5">
@@ -93,11 +182,78 @@
             <a href="/stop_bot" class="btn btn-danger">Stop Engine</a>
         </div>
 
-        <!-- Equity Growth Chart -->
-        <div class="glass-panel mb-4 p-3" style="border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; background: rgba(0,0,0,0.5);">
-            <h5 style="color: #00FF41; text-shadow: 0 0 5px #00FF41; margin-bottom: 15px;">Equity Growth</h5>
-            <div style="height: 250px; width: 100%;">
-                <canvas id="equityChart"></canvas>
+        <!-- BIONIC OVERRIDE CONSOLE -->
+        <div id="bionic-console" class="glass-panel p-3 mb-4" style="border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 8px; background: rgba(0,0,0,0.6);">
+            <h5 class="text-center" style="color: #00ffcc; text-shadow: 0 0 5px #00ffcc; letter-spacing: 1px;">BIONIC OVERRIDE CONSOLE</h5>
+            <div class="row text-center mt-3">
+                <div class="col-md-3 d-flex flex-column align-items-center justify-content-center">
+                    <label for="override-qty" class="text-light fw-bold mb-1">CONTRACT QTY</label>
+                    <input type="number" id="override-qty" class="form-control bg-dark text-light border-secondary text-center fs-4 w-75" value="1" min="1" max="100">
+                </div>
+                <div class="col-md-3">
+                    <button id="btn-override-buy" class="btn btn-bionic-buy w-100 h-100 fs-5 fw-bold">MARKET BUY</button>
+                </div>
+                <div class="col-md-3">
+                    <button id="btn-override-sell" class="btn btn-bionic-sell w-100 h-100 fs-5 fw-bold">MARKET SELL</button>
+                </div>
+                <div class="col-md-3">
+                    <button id="btn-override-hold" class="btn btn-bionic-hold w-100 h-100 fs-5 fw-bold">HOLD RUNNER: OFF</button>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-12">
+                    <button id="btn-override-flatten" class="btn btn-bionic-flatten w-100 fs-4 fw-bold">FLATTEN ALL</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-4">
+            <!-- Equity Growth Chart -->
+            <div class="col-lg-8">
+                <div class="glass-panel p-3 h-100" style="border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; background: rgba(0,0,0,0.5);">
+                    <h5 style="color: #00FF41; text-shadow: 0 0 5px #00FF41; margin-bottom: 15px;">Equity Growth</h5>
+                    <div style="height: 250px; width: 100%;">
+                        <canvas id="equityChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- TELEMETRY GLASS BOX PANEL -->
+            <div class="col-lg-4 d-flex flex-column gap-3">
+                <div class="glass-box-panel" id="market-pulse-card">
+                    <div class="glass-box-header text-center">&gt; MARKET PULSE_</div>
+                    <div class="d-flex justify-content-around mt-2">
+                        <div class="text-center">
+                            <div class="text-muted" style="font-size: 0.8em; letter-spacing: 1px;">AVG SWING</div>
+                            <div id="pulse-swing" class="fs-4 fw-bold status-wait">0.00 pts</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-muted" style="font-size: 0.8em; letter-spacing: 1px;">MOMENTUM</div>
+                            <div id="pulse-momentum" class="fs-4 fw-bold status-wait">UNKNOWN</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-box-panel flex-grow-1">
+                    <div class="glass-box-header">&gt; SYSTEM TELEMETRY_</div>
+                    <ul class="telemetry-checklist">
+                        <li>&gt; Trend Filter <span id="tel-trend" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Volatility Filter <span id="tel-vol" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; ML Confidence <span id="tel-ml" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; RL Supervisor <span id="tel-rl" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Pos Guards <span id="tel-pos" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Micro-CVD Guard <span id="tel-cvd" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Brake Pedal <span id="tel-brake" class="status-wait">[WAIT]</span></li>
+                        <li>&gt; Macro Guard <span id="tel-macro" class="status-wait">[WAIT]</span></li>
+                    </ul>
+                    <div class="ml-meter-container mt-auto">
+                        <div class="ml-meter-label">&gt; ML CONFIDENCE TRIGGER</div>
+                        <div class="progress-bar-bg">
+                            <div id="ml-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+                        </div>
+                        <div id="ml-progress-text" class="ml-meter-text">0.00%</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -698,6 +854,94 @@
                     if (isAligned) {
                         nasdaqStatus.classList.add('glow');
                     }
+
+                    // 7. Glass Box Telemetry
+                    if (data.latest_telemetry) {
+                        const tel = data.latest_telemetry;
+                        
+                        const setStatus = (id, value) => {
+                            const el = document.getElementById(id);
+                            if (typeof value === 'boolean') {
+                                if (value) {
+                                    el.className = 'status-pass';
+                                    el.textContent = '[ ✓ ] PASS';
+                                } else {
+                                    el.className = 'status-fail';
+                                    el.textContent = '[ X ] FAIL';
+                                }
+                            } else {
+                                el.textContent = `[ ${value} ]`;
+                                if (['BULLISH', 'UPTREND', 'CLEAR', 'READY', 'HEALTHY'].includes(value)) {
+                                    el.className = 'status-pass';
+                                } else if (['BEARISH', 'DOWNTREND'].includes(value)) {
+                                    el.className = 'status-fail';
+                                } else if (['ENGAGED', 'LOCKED', 'LOW VOL', 'CHOP'].includes(value)) {
+                                    el.className = 'status-warn';
+                                } else {
+                                    el.className = 'status-wait';
+                                }
+                            }
+                        };
+
+                        setStatus('tel-trend', tel.trend_desc !== undefined ? tel.trend_desc : tel.trend_pass);
+                        setStatus('tel-vol', tel.vol_desc !== undefined ? tel.vol_desc : tel.vol_pass);
+                        setStatus('tel-ml', tel.ml_pass);
+                        setStatus('tel-rl', tel.rl_pass);
+                        setStatus('tel-pos', tel.pos_desc !== undefined ? tel.pos_desc : tel.pos_guard_pass);
+                        setStatus('tel-cvd', tel.cvd_pass);
+                        setStatus('tel-brake', tel.brake_desc !== undefined ? tel.brake_desc : tel.brake_pedal_pass);
+                        setStatus('tel-macro', tel.macro_desc !== undefined ? tel.macro_desc : tel.macro_pass);
+
+                        // Market Pulse Logic
+                        const pulseSwing = document.getElementById('pulse-swing');
+                        const pulseMomentum = document.getElementById('pulse-momentum');
+                        
+                        if (pulseSwing && pulseMomentum) {
+                            pulseSwing.textContent = (tel.atr_value || 0).toFixed(2) + ' pts';
+                            pulseMomentum.textContent = tel.trend_desc || 'UNKNOWN';
+
+                            if (tel.trend_desc === 'BULLISH') {
+                                pulseSwing.className = 'fs-4 fw-bold status-pass';
+                                pulseMomentum.className = 'fs-4 fw-bold status-pass';
+                            } else if (tel.trend_desc === 'BEARISH') {
+                                pulseSwing.className = 'fs-4 fw-bold status-fail';
+                                pulseMomentum.className = 'fs-4 fw-bold status-fail';
+                            } else {
+                                pulseSwing.className = 'fs-4 fw-bold status-warn';
+                                pulseMomentum.className = 'fs-4 fw-bold status-warn';
+                            }
+                        }
+
+                        const mlConf = tel.ml_confidence || 0.0;
+                        document.getElementById('ml-progress-fill').style.width = Math.min(100, mlConf) + '%';
+                        document.getElementById('ml-progress-text').textContent = mlConf.toFixed(2) + '%';
+                        
+                        if (mlConf >= 80.0) {
+                            document.getElementById('ml-progress-fill').style.backgroundColor = '#00ff00';
+                            document.getElementById('ml-progress-fill').style.boxShadow = '0 0 10px #00ff00';
+                        } else {
+                            document.getElementById('ml-progress-fill').style.backgroundColor = '#00ffcc';
+                            document.getElementById('ml-progress-fill').style.boxShadow = 'inset 0 0 8px rgba(255, 255, 255, 0.3)';
+                        }
+                    } else {
+                        const resetStatus = (id) => {
+                            const el = document.getElementById(id);
+                            el.className = 'status-wait';
+                            el.textContent = '[WAIT]';
+                        };
+                        ['tel-trend', 'tel-vol', 'tel-ml', 'tel-rl', 'tel-pos', 'tel-cvd', 'tel-brake', 'tel-macro'].forEach(resetStatus);
+                        document.getElementById('ml-progress-fill').style.width = '0%';
+                        document.getElementById('ml-progress-text').textContent = '0.00%';
+                        
+                        const pulseSwing = document.getElementById('pulse-swing');
+                        const pulseMomentum = document.getElementById('pulse-momentum');
+                        if (pulseSwing && pulseMomentum) {
+                            pulseSwing.className = 'fs-4 fw-bold status-wait';
+                            pulseMomentum.className = 'fs-4 fw-bold status-wait';
+                            pulseSwing.textContent = '0.00 pts';
+                            pulseMomentum.textContent = 'UNKNOWN';
+                        }
+                    }
                 })
                 .catch(e => {
                     console.error(e);
@@ -796,6 +1040,59 @@
                 }
             })
             .catch(error => console.error("Error toggling scheduler override:", error));
+        });
+
+        // Bionic Override Console Logic
+        function sendManualOverride(action) {
+            const qty = parseInt(document.getElementById('override-qty').value, 10) || 1;
+            fetch('/api/manual_override', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action, qty: qty })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if(data.status !== 'success') {
+                    console.error("Manual override failed:", data.message);
+                    alert("Override Failed: " + data.message);
+                } else {
+                    console.log("Manual override success:", action);
+                }
+            })
+            .catch(err => console.error("Error sending manual override:", err));
+        }
+
+        document.getElementById('btn-override-buy').addEventListener('click', () => sendManualOverride('BUY'));
+        document.getElementById('btn-override-sell').addEventListener('click', () => sendManualOverride('SHORT'));
+        document.getElementById('btn-override-flatten').addEventListener('click', () => sendManualOverride('FLATTEN'));
+        
+        document.getElementById('btn-override-hold').addEventListener('click', function() {
+            this.classList.toggle('active');
+            if(this.classList.contains('active')) {
+                this.textContent = 'HOLD RUNNER: ON';
+            } else {
+                this.textContent = 'HOLD RUNNER: OFF';
+            }
+            sendManualOverride('TOGGLE_HOLD');
+        });
+
+        // Keyboard Shortcut for Approval (Space or Enter)
+        document.addEventListener('keydown', function(e) {
+            // Ignore if user is interacting with an input field (like changing contract qty or toggling switches)
+            if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+                return;
+            }
+
+            if (e.code === 'Space' || e.code === 'Enter') {
+                const queueDiv = document.getElementById('approval-queue-section');
+                if (queueDiv && queueDiv.style.display !== 'none') {
+                    const approveBtn = document.querySelector('#approval-queue-cards .btn-success');
+                    if (approveBtn) {
+                        e.preventDefault(); // Prevent page scrolling on Space
+                        approveBtn.click();
+                    }
+                }
+            }
         });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

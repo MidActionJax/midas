@@ -1,7 +1,7 @@
 import pandas as pd
+import numpy as np
 import joblib
 import os
-import glob
 
 # --- Configuration ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +14,7 @@ DATA_DIR = os.path.join(BASE_DIR, 'data', 'lvl_2_clean', 'short')
 FEATURES = [
     'Bid_Vol', 'Ask_Vol', 'Imbalance_Skew_30s', 
     'Bid_Drop_Velocity', 'Ask_Surge_Velocity', 
-    'Price_Momentum_10s', 'Distance_from_SMA60', 'Volatility_60s'
+    'Price_Momentum_10s', 'Distance_from_SMA60', 'Volatility_60s', 'Session_CVD'
 ]
 TARGET_COL = 'Target'
 ATR_COL = 'Volatility_60s'  # We use Volatility_60s as our historical ATR equivalent
@@ -31,15 +31,8 @@ def run_grid_search():
     model = joblib.load(MODEL_FILE)
     
     # 2. Load the Historical Data
-    print(f"📂 Searching for historical testing data in {DATA_DIR}...")
-    data_files = glob.glob(os.path.join(DATA_DIR, "Short_ML_Ready*.csv"))
-    
-    if not data_files:
-        print("❌ Error: No ML_Ready data files found. Please ensure your testing data is available.")
-        return
-        
-    # Stitch together all available testing data
-    df = pd.concat([pd.read_csv(f) for f in data_files], ignore_index=True)
+    print("⏳ Loading the Master Data file...")
+    df = pd.read_csv("Master_ML_Ready_Data_Short.csv")
     
     # --- 2.5 Inject Feature Engineering ---
     # --- 2. UPDATE THE TIME-SERIES MATH (Around line 40) ---
@@ -63,11 +56,26 @@ def run_grid_search():
     df['Distance_from_SMA60'] = df['Mid_Price'] - df['SMA_60']
     df['Volatility_60s'] = df['Mid_Price'].rolling(window=60).std()
 
+    # 200-Minute Macro EMA Proxy (12,000 seconds)
+    df['SMA_Macro'] = df['Mid_Price'].rolling(window=12000).mean()
+    
+    # 14-Minute Choppiness Index Proxy (840 seconds)
+    df['Roll_High'] = df['Mid_Price'].rolling(window=840).max()
+    df['Roll_Low'] = df['Mid_Price'].rolling(window=840).min()
+    df['ATR_1s'] = df['Mid_Price'].diff().abs()
+    df['ATR_Sum'] = df['ATR_1s'].rolling(window=840).sum()
+    df['Chop_Index'] = 100 * np.log10(df['ATR_Sum'] / (df['Roll_High'] - df['Roll_Low'])) / np.log10(840)
+
     if not all(col in df.columns for col in FEATURES + [TARGET_COL]):
         print(f"❌ Error: Missing required features in the dataset. Required: {FEATURES}")
         return
         
     df.dropna(subset=FEATURES + [TARGET_COL], inplace=True)
+    
+    print("🛡️ Applying Execution Engine Bodyguards (Macro Trend & Regime Filter)...")
+    df = df[df['Mid_Price'] < df['SMA_Macro']]  # Macro Guard (Only Shorts in Downtrends)
+    df = df[df['Chop_Index'] <= 50.0]           # Regime Filter (Only trade when Trending)
+
     print(f"✅ Loaded {len(df):,} valid snapshots of historical data.")
     
     # 3. Batch Prediction (Optimization)

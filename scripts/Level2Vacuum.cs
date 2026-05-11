@@ -20,6 +20,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				filePath = Path.Combine(desktopPath, $"MES_Level2_Dump_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
 				
 				csvWriter = new StreamWriter(filePath, true);
+				csvWriter.AutoFlush = true;
 				// Write the Headers
 				csvWriter.WriteLine("Timestamp,Side,Position,Price,Volume");
 			}

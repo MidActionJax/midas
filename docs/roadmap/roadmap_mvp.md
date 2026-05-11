@@ -429,5 +429,12 @@ Goal: Allow the user to front-run the AI while forcing the bot to act as a stric
 [ ] The Override UI Module: Build a sleek control panel on the dashboard with a "Contract Quantity" input box (or 1, 2, 5, 10 quick-select buttons).
 [ ] The Execution Buttons: Add massive, color-coded [ MARKET BUY ] and [ MARKET SELL ] buttons.
 [ ] The Signal Injector: Route these buttons through Flask to inject a MANUAL_OVERRIDE signal directly into engine.py's pending queue.
-[ ] Algorithmic Hand-off: Ensure that the moment a manual trade fills, the Engine immediately adopts the position, applying the Auto-Breakeven, Fluid Ratchet, and Micro-Profit Protectors automatically.
+[ ] Algorithmic Hand-off: Ensure that the moment a manual trade fills, the Engine immediately adopts the position, applying the Auto-Breakeven, Fluid Ratchet, and Micro-Profit Protectors, etc automatically.
+
+DROPDOWN FOR CONTRACT NUMBER 
+as long as im tabbed on the screen space or enter = approved
+AVERAGE SWINGS?? HOW MNAY POINTS IS IT AVERAGEING 3 point swings? more??
+
+CONTAMINATION RESET!!!
+LOGGING!!!
 ---

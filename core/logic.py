@@ -29,7 +29,7 @@ MODEL_PATH_PINGPONG = os.path.join(BASE_DIR, 'models', 'midas_brain_pingpong.pkl
 TRUTH_ENGINE_LONG = None
 TRUTH_ENGINE_SHORT = None
 TRUTH_ENGINE_PINGPONG = None
-MIN_CONFIDENCE_THRESHOLD = 85.0
+MIN_CONFIDENCE_THRESHOLD = 80.0
 
 class DualCoreMemory:
     def __init__(self):
@@ -162,7 +162,10 @@ def get_market_session():
     try:
         from datetime import time as datetime_time
         
-        now_est = state_manager.get_current_time().time()
+        current_time = state_manager.get_current_time()
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=ZoneInfo('US/Arizona'))
+        now_est = current_time.astimezone(ZoneInfo('US/Eastern')).time()
 
         open_end = datetime_time(10, 30)
         trend_est_end = datetime_time(12, 0)
@@ -203,7 +206,10 @@ def get_dynamic_thresholds():
     try:
         from datetime import time as datetime_time
         
-        now_est = state_manager.get_current_time().time()
+        current_time = state_manager.get_current_time()
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=ZoneInfo('US/Arizona'))
+        now_est = current_time.astimezone(ZoneInfo('US/Eastern')).time()
 
         open_end = datetime_time(10, 30)
         trend_est_end = datetime_time(12, 0)
@@ -219,24 +225,24 @@ def get_dynamic_thresholds():
         if now_est >= power_hour_end and now_est < halt_end:
             if not getattr(state_manager, 'ignore_scheduler', False):
                 return {'min_confidence': 100.0, 'halt': True, 'min_atr': 2.0, 'strategy': 'NONE'}
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est >= halt_end or now_est < asian_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
 
         if now_est < datetime_time(9, 30):
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est < open_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
         elif now_est < trend_est_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est < lunch_chop_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
         elif now_est < reset_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         elif now_est < power_hour_end:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
         else:
-            return {'min_confidence': 85.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}  # After hours
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}  # After hours
     except Exception as e:
         return {'min_confidence': 75.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}
 
@@ -379,7 +385,8 @@ def calculate_choppiness_index(df, period=14):
     
     # Prevent premature NaN evaluation by injecting a safe divisor
     safe_denominator = np.where(denominator == 0, 1e-10, denominator)
-    chop = np.where(denominator == 0, 50.0, 100 * np.log10(numerator / safe_denominator) / np.log10(period))
+    safe_ratio = np.maximum(numerator / safe_denominator, 1e-9)
+    chop = np.where(denominator == 0, 50.0, 100 * np.log10(safe_ratio) / np.log10(period))
     
     # Return the last value, ensure it's a float
     return float(chop[-1]) if len(chop) > 0 else 50.0
@@ -544,12 +551,15 @@ def update_concrete_state(current_price, current_atr, symbol='MES'):
             state_manager.fence_shattered = True
 
     if getattr(state_manager, 'is_concrete_wet', False):
+        # GRAB THE NINJATRADER CLOCK
+        current_ts = state_manager.get_current_time().timestamp()
+
         # SURGICAL FIX: Force a rebuild if ANY of the three variables are missing
         if getattr(state_manager, 'stagnation_start_time', None) is None or \
            getattr(state_manager, 'stagnation_min_price', None) is None or \
            getattr(state_manager, 'stagnation_max_price', None) is None:
             
-            state_manager.stagnation_start_time = time.time()
+            state_manager.stagnation_start_time = current_ts # FIXED
             state_manager.stagnation_min_price = current_price
             state_manager.stagnation_max_price = current_price
         else:
@@ -557,12 +567,12 @@ def update_concrete_state(current_price, current_atr, symbol='MES'):
             state_manager.stagnation_max_price = max(state_manager.stagnation_max_price, current_price)
             
             range_width = state_manager.stagnation_max_price - state_manager.stagnation_min_price
-            time_stagnant = time.time() - state_manager.stagnation_start_time
+            time_stagnant = current_ts - state_manager.stagnation_start_time # FIXED
             
             session_atr_avg = sum(state_manager.session_atr_list) / len(state_manager.session_atr_list) if getattr(state_manager, 'session_atr_list', []) else current_atr
             
             if range_width > 2.5:
-                state_manager.stagnation_start_time = time.time()
+                state_manager.stagnation_start_time = current_ts # FIXED
                 state_manager.stagnation_min_price = current_price
                 state_manager.stagnation_max_price = current_price
             elif time_stagnant > 300 and current_atr < session_atr_avg:
@@ -691,7 +701,10 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         
         est = ZoneInfo('US/Eastern')
         if state_manager.current_market_time:
-            current_hour = state_manager.current_market_time.hour
+            current_time = state_manager.current_market_time
+            if current_time.tzinfo is None:
+                current_time = current_time.replace(tzinfo=ZoneInfo('US/Arizona'))
+            current_hour = current_time.astimezone(est).hour
         else:
             current_hour = datetime.now(est).hour
 
@@ -699,7 +712,10 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         # Ensure we have at least 60 seconds of history, otherwise default to 0
         sma_30 = sum(price_history_mes[-30:]) / 30 if len(price_history_mes) >= 30 else current_price_mes
         sma_60 = sum(price_history_mes[-60:]) / 60 if len(price_history_mes) >= 60 else current_price_mes
-        trend_alignment = sma_30 - sma_60
+        
+        trend_alignment = 0.0
+        if sma_30 is not None and sma_60 is not None:
+            trend_alignment = sma_30 - sma_60
         volatility_60s = statistics.stdev(price_history_mes[-60:]) if len(price_history_mes) >= 60 else 0.0
         
         # Short Specific Features
@@ -707,7 +723,10 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         ask_surge_velocity = ask_vol - dc_memory.ask_vol_hist[0] if len(dc_memory.ask_vol_hist) == 6 else 0.0
         imbalance_skew_30s = sum(dc_memory.imbalance_hist) / len(dc_memory.imbalance_hist) if len(dc_memory.imbalance_hist) > 0 else 0.0
         price_momentum_10s = price_history_mes[-1] - price_history_mes[-11] if len(price_history_mes) >= 11 else 0.0
-        distance_from_sma60 = mid_price - sma_60
+        
+        distance_from_sma60 = 0.0
+        if mid_price is not None and sma_60 is not None:
+            distance_from_sma60 = mid_price - sma_60
 
         # 3. THE SPLIT-BRAIN ROUTER
         if trend_alignment > 0 and TRUTH_ENGINE_LONG:
@@ -777,14 +796,19 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
             # --- AI SNIPER TRIGGER ---
             # Set asymmetric thresholds: Escalator Up (85%), Elevator Down (84%)
-            target_threshold = 85.0 if active_brain == 'LONG' else 84.0
+            target_threshold = 80.0 if active_brain == 'LONG' else 80.0
             
             # If the AI is confident, it creates its own signal even if no iceberg exists!
             if ml_score_pct >= target_threshold:
                 
                 # --- PHASE 2, STEP 3: THE MACRO VETO ---
-                distance_to_floor = current_price_mes - macro_floor_price
-                distance_to_ceiling = macro_ceiling_price - current_price_mes
+                distance_to_floor = 0.0
+                if current_price_mes is not None and macro_floor_price is not None:
+                    distance_to_floor = current_price_mes - macro_floor_price
+                    
+                distance_to_ceiling = 0.0
+                if current_price_mes is not None and macro_ceiling_price is not None:
+                    distance_to_ceiling = macro_ceiling_price - current_price_mes
                 
                 print(f'[🛡️ SHIELD ACTIVE] Checking wall strength: {macro_floor_vol} vs threshold {dynamic_wall}')
 
@@ -807,7 +831,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                         'size': 1.0,
                         'timestamp': round(time.time(), 4),
                         'reason': f'Dual-Core Sniper ({active_brain})',
-                        'signal_direction': 'SHORT' if active_brain == 'SHORT' else 'BUY',
+                        'signal_direction': 'SHORT' if active_brain == 'SHORT' else 'LONG',
                         'trend_pass': True,
                         'volatility_pass': True
                         # Notice we REMOVED the fake atr=99.0 hack here so your stop-loss math stays safe
@@ -854,12 +878,14 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                     # Rubber Band Stretch: How many points price can pull away from the EMA before it must "snap" back
                     rubber_band_stretch = 10.0 
                     is_rubber_band_trade = False
+                    distance_from_ema = 0.0
                     
-                    if macro_ema and current_price > 0 and abs(current_price - macro_ema) >= rubber_band_stretch:
-                        is_rubber_band_trade = True
-                    
-                    if phase2_pass and macro_ema and current_price > 0:
+                    if current_price is not None and macro_ema is not None and current_price > 0:
                         distance_from_ema = current_price - macro_ema
+                        if abs(distance_from_ema) >= rubber_band_stretch:
+                            is_rubber_band_trade = True
+                    
+                    if phase2_pass and current_price is not None and macro_ema is not None and current_price > 0:
                         
                         if 'BUY' in signal['type'] and current_price < macro_ema:
                             # Rubber Band Check: Are we so far below the EMA that a snap-back is imminent?
@@ -885,19 +911,20 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
                                 phase2_pass = False
                                 veto_reason = "[🛡️ STATIC] Concrete is Dry - Consolidation Phase."
                                 
-                        # Only apply ORB logic if _
-                            highest_seen = getattr(state_manager, 'highest_price_seen', None)
-                            lowest_seen = getattr(state_manager, 'lowest_price_seen', None)
-                            
-                            if not getattr(state_manager, 'fence_shattered', False):
-                                if highest_seen is not None and (highest_seen - or_high) > 15.0:
-                                    state_manager.fence_shattered = True
-                                    print("[🚀 ESCAPE VELOCITY] Bullish ORB Fence shattered!")
-                                elif lowest_seen is not None and (or_low - lowest_seen) > 15.0:
-                                    state_manager.fence_shattered = True
-                                    print("[🚀 ESCAPE VELOCITY] Bearish ORB Fence shattered!")
-                            
-                            if not getattr(state_manager, 'fence_shattered', False):
+                        # Only apply ORB logic if Opening Range exists
+                        highest_seen = getattr(state_manager, 'highest_price_seen', None)
+                        lowest_seen = getattr(state_manager, 'lowest_price_seen', None)
+                        
+                        if not getattr(state_manager, 'fence_shattered', False):
+                            if highest_seen is not None and or_high is not None and (highest_seen - or_high) > 15.0:
+                                state_manager.fence_shattered = True
+                                print("[🚀 ESCAPE VELOCITY] Bullish ORB Fence shattered!")
+                            elif lowest_seen is not None and or_low is not None and (or_low - lowest_seen) > 15.0:
+                                state_manager.fence_shattered = True
+                                print("[🚀 ESCAPE VELOCITY] Bearish ORB Fence shattered!")
+                        
+                        if not getattr(state_manager, 'fence_shattered', False):
+                            if or_high is not None and or_low is not None:
                                 range_width = or_high - or_low
                                 if range_width <= 20.0:
                                     if current_session not in ["Pre-Market", "The Open"]:
@@ -924,10 +951,10 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         signal['trend'] = trend_mes
         
     if 'trend_pass' not in signal:
-        signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
-        if signal_direction == 'BUY' and market_trend == 'BULLISH':
+        signal_direction = 'LONG' if 'BUY' in signal.get('type', '').upper() else 'SHORT'
+        if signal_direction == 'LONG' and market_trend == 'BULLISH':
             signal['trend_pass'] = True
-        elif signal_direction == 'SELL' and market_trend == 'BEARISH':
+        elif signal_direction == 'SHORT' and market_trend == 'BEARISH':
             signal['trend_pass'] = True
         else:
             signal['trend_pass'] = False
@@ -973,14 +1000,23 @@ def analyze_mean_reversion(symbol, order_book, price_history, chop_index):
     dynamic_wall = get_dynamic_wall_threshold(order_book)
 
     # 2. Calculate distance to the walls
-    dist_to_floor = current_price - floor_price
-    dist_to_ceiling = ceiling_price - current_price
+    dist_to_floor = 0.0
+    if current_price is not None and floor_price is not None:
+        dist_to_floor = current_price - floor_price
+        
+    dist_to_ceiling = 0.0
+    if current_price is not None and ceiling_price is not None:
+        dist_to_ceiling = ceiling_price - current_price
 
     ml_confidence = 80.0
+    distance_from_sma60 = 0.0
+    if current_price is not None and sma_60 is not None:
+        distance_from_sma60 = current_price - sma_60
+        
     if TRUTH_ENGINE_PINGPONG:
         try:
             features = pd.DataFrame([{
-                'Distance_from_SMA60': abs(current_price - sma_60),
+                'Distance_from_SMA60': abs(distance_from_sma60),
                 'Floor_Vol': floor_vol,
                 'Ceiling_Vol': ceiling_vol,
                 'ATR': get_current_atr(price_history),
@@ -1073,7 +1109,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
             'size': 1.0,
             'reason': 'Momentum Surfer',
             'confidence_score': 80.0,
-            'ml_confidence_value': 85.0,
+            'ml_confidence_value': 80.0,
             'timestamp': round(time.time(), 4)
         }
     elif current_price < (ema_5 - (1.0 * atr)):
@@ -1085,7 +1121,7 @@ def analyze_breakout(symbol, order_book, price_history, chop_index):
             'size': 1.0,
             'reason': 'Momentum Surfer',
             'confidence_score': 80.0,
-            'ml_confidence_value': 85.0,
+            'ml_confidence_value': 80.0,
             'timestamp': round(time.time(), 4)
         }
 
@@ -1120,18 +1156,27 @@ def analyze_stagnation_exit(symbol, current_price, position_data):
     position_data['last_extremum_price'] = best_price
     
     # 3. Update Stagnation Timer
+    current_ts = state_manager.get_current_time().timestamp()
     if made_new_extremum or 'last_extremum_timestamp' not in position_data:
-        position_data['last_extremum_timestamp'] = time.time()
+        position_data['last_extremum_timestamp'] = current_ts
 
-    elapsed_seconds = time.time() - position_data['last_extremum_timestamp']
+    elapsed_seconds = current_ts - position_data['last_extremum_timestamp']
 
-    # 4. Dynamic Threshold based on ATR
+    # 4. Dynamic Threshold based on ATR and Chop Index
     price_history = state_manager.price_history.get(symbol, [])
     atr = get_current_atr(price_history) if price_history else 2.0
     
-    # Base threshold is 75 heartbeats. Adjust inversely proportional to ATR.
+    chop = getattr(state_manager, 'current_chop_index', 50.0)
+    if chop < 45.0:
+        base_heartbeats = 150
+    elif chop > 55.0:
+        base_heartbeats = 50
+    else:
+        base_heartbeats = 75
+    
+    # Adjust inversely proportional to ATR.
     safe_atr = max(atr, 0.5) # Prevent division by zero
-    dynamic_threshold = int(75 * (2.0 / safe_atr))
+    dynamic_threshold = int(base_heartbeats * (2.0 / safe_atr))
     dynamic_threshold = max(25, min(dynamic_threshold, 150)) # Clamp bounds between 25 and 150
     
     if elapsed_seconds >= dynamic_threshold:

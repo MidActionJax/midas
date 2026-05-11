@@ -1,19 +1,11 @@
 import pandas as pd
-import glob
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, precision_score
 import joblib
 
-print("🔍 Hunting for all ML_Ready files...")
-# This finds every single CSV file in the folder that starts with "ML_Ready"
-file_list = glob.glob("data/lvl_2_clean/long/ML_Ready*.csv")
-print(f"✅ Found {len(file_list)} files. Stitching them together...")
-
-# Zip all 12 files into one giant Master Dataset
-df_list = [pd.read_csv(file) for file in file_list]
-df = pd.concat(df_list, ignore_index=True)
-
-print(f"🧵 Master Dataset created! Total 1-second snapshots: {len(df):,}")
+print("⏳ Loading the Master Data file...")
+df = pd.read_csv("Master_ML_Ready_Data_Long.csv")
+print(f"🧵 Master Dataset loaded! Total 1-second snapshots: {len(df):,}")
 
 # --- THE TIME MACHINE FIX ---
 print("⏱️ Sorting timeline to prevent Look-Ahead Bias...")

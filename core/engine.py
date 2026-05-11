@@ -146,7 +146,7 @@ class MidasEngine(threading.Thread):
                     is_tracked = any(p.get('symbol') in sym for p in tracked_positions)
                     if not is_tracked:
                         # 🛡️ GHOST ADOPTION SHIELD: Ignore straggling NT balances for 15s after an exit
-                        if time.time() - self.last_trade_time > 15:
+                        if state.state_manager.get_current_time().timestamp() - self.last_trade_time > 15:
                             current_price = self.adapter.get_current_price(sym)
                             adopted_pos = {
                                 'symbol': 'MES' if 'MES' in sym else ('MNQ' if 'MNQ' in sym else sym),
@@ -173,6 +173,22 @@ class MidasEngine(threading.Thread):
                 raw_type = pos.get('type', 'BUY').upper()
                 pos_type = 'LONG' if 'BUY' in raw_type else 'SHORT'
                 
+                # --- DEAD SOCKET SWEEPER ---
+                # If the bot triggered an exit, track the real-world time.
+                if pos.get('exit_triggered'):
+                    if 'exit_real_timestamp' not in pos:
+                        pos['exit_real_timestamp'] = time.time()
+                    # If 10 real seconds have passed and the position is still in memory, the socket crashed. Force clear it.
+                    elif time.time() - pos['exit_real_timestamp'] > 10:
+                        print(f"--- 🧹 ORPHAN SWEEPER: Broker connection lost/timed out. Force clearing {pos_symbol} ---")
+                        try:
+                            state.state_manager.active_positions.remove(pos)
+                        except ValueError:
+                            pass
+                        if hasattr(state.state_manager, 'live_nt_positions'):
+                            state.state_manager.live_nt_positions[pos_symbol] = 0
+                        continue
+
                 # --- THE ULTIMATE FUZZY MATCH ---
                 match = None
                 
@@ -195,9 +211,8 @@ class MidasEngine(threading.Thread):
                                 break
 
                 # --- VIRTUAL MATCH GRACE PERIOD ---
-                # If NT8 hasn't reported the fill yet, assume we are in the position for the first 15 seconds.
-                entry_time = pos.get('timestamp', time.time())
-                if match is None and time.time() - entry_time < 15 and not pos.get('exit_triggered'):
+                # If NT8 hasn't reported the fill yet, use REAL CPU time (not Replay time) to wait for network latency
+                if match is None and abs(time.time() - pos.get('real_timestamp', time.time())) < 15 and not pos.get('exit_triggered'):
                     match = {'size': pos.get('size', 1), 'side': pos_type}
 
                 # Identify and remove any positions that share the exact same entry_price and signal_timestamp
@@ -247,40 +262,70 @@ class MidasEngine(threading.Thread):
                             log_to_both(f"💓 [HEARTBEAT] {pos_symbol} {pos_type} | Profit: {points_profit:.2f} pts | SL: {pos.get('dynamic_sl', -1.0):.2f}")
                             pos['last_pnl_log_time'] = current_time
 
-                        # --- TASK 2: MICRO & STEP-BASED RATCHET ---
-                        breakeven_trigger = max(0.75, current_atr * 0.3)
-                        ratchet_trigger = max(1.25, current_atr * 0.5)
-                        trail_distance = max(0.75, current_atr * 0.3)
-
-                        # Continuous fluid trailing stop based on max_profit
-                        if pos['max_profit'] >= ratchet_trigger:
-                            new_sl = max(0.25, pos['max_profit'] - trail_distance)
+                        # --- TASK 2: TIERED RATCHET (GEARS) ---
+                        if pos['max_profit'] > 5.0 * current_atr:
+                            new_sl = pos['max_profit'] - (3.0 * current_atr)
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- FLUID RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] >= breakeven_trigger:
+                                log_to_both(f"--- GEAR 3 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        elif pos['max_profit'] > 3.0 * current_atr:
+                            new_sl = pos['max_profit'] - (1.5 * current_atr)
+                            if new_sl > pos['dynamic_sl']:
+                                pos['dynamic_sl'] = new_sl
+                                log_to_both(f"--- GEAR 2 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        elif pos['max_profit'] > 1.0 * current_atr:
                             new_sl = 0.25
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                                log_to_both(f"--- GEAR 1 AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
                                  
                         # Remove the hard ceiling
                         hit_tp = False 
                         hit_sl = points_profit <= pos['dynamic_sl']
                         
+                        # --- WALL-BANGER TAKE PROFIT ---
+                        if points_profit >= 3.5:
+                            market_depth = state.state_manager.get_market_data(pos_symbol)
+                            if market_depth:
+                                floor_price, floor_vol, ceil_price, ceil_vol = logic.get_macro_box(market_depth, current_price)
+                                dynamic_wall = logic.get_dynamic_wall_threshold(market_depth)
+                                if is_long and (ceil_price - current_price) <= 1.0 and ceil_vol >= dynamic_wall and state.state_manager.session_cvd > 10.0:
+                                    hit_tp = True
+                                    log_to_both("!!! ABSORPTION EJECTOR: Buyers trapped at Ceiling Wall. Taking Profit! !!!")
+                                elif not is_long and (current_price - floor_price) <= 1.0 and floor_vol >= dynamic_wall and state.state_manager.session_cvd < -10.0:
+                                    hit_tp = True
+                                    log_to_both("!!! ABSORPTION EJECTOR: Sellers trapped at Floor Wall. Taking Profit! !!!")
+
+                        # --- EMA TREND-RIDER ---
+                        ema_15 = None
+                        riding_trend = False
+                        market_data = state.state_manager.get_market_data(pos_symbol)
+                        if market_data and 'ema_15' in market_data:
+                            ema_15 = market_data['ema_15']
+                        if ema_15 is None and hasattr(self.adapter, 'current_features'):
+                            ema_15 = self.adapter.current_features.get(f'ema_15_{pos_symbol.lower()}')
+                            
+                        if ema_15 is not None:
+                            riding_trend = (is_long and current_price >= ema_15) or (not is_long and current_price <= ema_15)
+
                         # --- TASK 1: 45-SECOND KILL SWITCH ---
-                        time_open = time.time() - pos.get('timestamp', time.time())
-                        hit_time_kill = time_open >= 45 and points_profit <= 0
+                        current_market_ts = state.state_manager.get_current_time().timestamp()
+                        time_open = current_market_ts - pos.get('timestamp', current_market_ts)
+                        hit_time_kill = time_open >= 45 and points_profit <= 0 and not riding_trend and not getattr(state.state_manager, 'hold_override_active', False)
                         
                         # --- STAGNATION TIGHTENER ---
-                        if time_open > 120:
+                        if time_open > 120 and not riding_trend:
                             new_sl = pos['max_profit'] - 1.5
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
                                 log_to_both(f"--- STAGNATION TIGHTENER: {pos_symbol} SL moved to {new_sl:.2f} ---")
                         
                         stagnation_signal = logic.analyze_stagnation_exit(pos_symbol, current_price, pos)
-                        
+                        if getattr(state.state_manager, 'hold_override_active', False):
+                            stagnation_signal = None
+                        if riding_trend:
+                            stagnation_signal = None
+
                         if hit_tp or hit_sl or hit_time_kill or stagnation_signal:
                             if pos.get('exit_triggered'):
                                 pass  # Exit order already sent. Waiting for broker confirmation.
@@ -301,6 +346,7 @@ class MidasEngine(threading.Thread):
                                 # Tag the position IMMEDIATELY to prevent machine-gunning NinjaTrader on socket drop
                                 pos['exit_triggered'] = True
                                 pos['exit_time'] = time.time()
+                                self.last_trade_time = state.state_manager.get_current_time().timestamp()
                                 
                                 try:
                                     # --- HARD GUARD: Right before executing exit PLACE_ORDER ---
@@ -353,14 +399,14 @@ class MidasEngine(threading.Thread):
                                     pos.pop('exit_time', None)
                 else:
                     # --- POSITION FLAT/CLOSED FLOW ---
-                    current_time = time.time()
+                    current_time = state.state_manager.get_current_time().timestamp()
 
                     # --- BULLETPROOF GRACE PERIOD ---
-                    entry_time = pos.get('timestamp', time.time())
-                    if time.time() - entry_time < 15 and not pos.get('exit_triggered'):
-                        if current_time - pos.get('last_match_fail_time', 0) >= 5:
+                    # Use real CPU time for network syncing
+                    if abs(time.time() - pos.get('real_timestamp', time.time())) < 15 and not pos.get('exit_triggered'):
+                        if time.time() - pos.get('last_match_fail_time', 0) >= 5:
                             print(f"[⏳ SYNC WAIT] NT8 hasn't confirmed {pos_symbol} order yet. Waiting...")
-                            pos['last_match_fail_time'] = current_time
+                            pos['last_match_fail_time'] = time.time()
                         continue 
 
                     if pos.get('exit_triggered') and current_time - pos.get('last_match_fail_time', 0) >= 5:
@@ -440,16 +486,20 @@ class MidasEngine(threading.Thread):
                         if final_pnl > 0:
                             state.state_manager.live_wins += 1
                             state.state_manager.consecutive_losses = 0
+                            state.state_manager.consecutive_loss_pnl = 0.0
                         elif final_pnl < 0:
                             state.state_manager.consecutive_losses += 1
-                            if state.state_manager.consecutive_losses >= 2:
-                                state.state_manager.time_out_until = time.time() + 3600
-                                log_to_both("!!! 60-MINUTE TIME-OUT ACTIVATED (2 Consecutive Losses) !!!")
+                            state.state_manager.consecutive_loss_pnl += final_pnl
+                            if state.state_manager.consecutive_loss_pnl <= -50.0 or state.state_manager.consecutive_losses >= 5:
+                                state.state_manager.time_out_until = time.time() + 900
+                                log_to_both("!!! 15-MINUTE SPEED BUMP ACTIVATED (Drawdown limit reached) !!!")
+                                state.state_manager.consecutive_losses = 0
+                                state.state_manager.consecutive_loss_pnl = 0.0
                                 
                         state.state_manager.account_balance += final_pnl
                     
                     log_to_both(f"--- EXIT DETECTED: {final_pnl} ---")
-                    self.last_trade_time = time.time()
+                    self.last_trade_time = state.state_manager.get_current_time().timestamp()
         except Exception as e:
             print(f"Error in manage_positions: {e}")
 
@@ -497,11 +547,85 @@ class MidasEngine(threading.Thread):
                         time.sleep(1)
                         continue
 
+                    # --- PROCESS MANUAL COMMANDS ---
+                    while state.state_manager.manual_command_queue:
+                        cmd = state.state_manager.manual_command_queue.pop(0)
+                        action = cmd.get('action')
+                        cmd_symbol = cmd.get('symbol', config.TRADING_SYMBOL)
+                        qty = cmd.get('qty', 1)
+                        
+                        if action in ['BUY', 'SHORT']:
+                            exec_price = self.adapter.get_current_price(cmd_symbol)
+                            signal_id = f"MANUAL_{int(time.time())}"
+                            
+                            if action == 'BUY':
+                                trade_executed = self.adapter.execute_buy(cmd_symbol, qty, exec_price, signal_id=signal_id)
+                                pos_type = 'BUY'
+                            else:
+                                trade_executed = self.adapter.execute_sell(cmd_symbol, qty, exec_price, signal_id=signal_id, side='SHORT')
+                                pos_type = 'SHORT'
+                                
+                            if trade_executed:
+                                # --- REPLAY BYPASS: Force Broker Memory Update ---
+                                if not hasattr(state.state_manager, 'live_nt_positions'):
+                                    state.state_manager.live_nt_positions = {}
+                                current_qty = state.state_manager.live_nt_positions.get(cmd_symbol, 0)
+                                if pos_type == 'SHORT':
+                                    state.state_manager.live_nt_positions[cmd_symbol] = current_qty - qty
+                                else:
+                                    state.state_manager.live_nt_positions[cmd_symbol] = current_qty + qty
+                                position = {
+                                    'symbol': cmd_symbol,
+                                    'entry_price': exec_price,
+                                    'size': qty,
+                                    'type': pos_type,
+                                    'timestamp': state.state_manager.get_current_time().timestamp(),
+                                    'real_timestamp': time.time(),
+                                    'signal_timestamp': time.time(),
+                                    'signal_id': signal_id
+                                }
+                                state.state_manager.add_position(position)
+                                
+                                # --- ENTRY TRIGGER: Start Log Capture for Manual Trade ---
+                                sig_id_str = str(signal_id)
+                                state.state_manager.active_trade_logs[sig_id_str] = list(state.state_manager.log_rolling_buffer)[-200:]
+                                log_to_both(f"--- LOG CAPTURE STARTED FOR MANUAL SIGNAL {sig_id_str} ---")
+                                
+                                log_to_both(f"✅ MANUAL {action} EXECUTED: {cmd_symbol} at {exec_price}")
+                                
+                        elif action == 'FLATTEN':
+                            log_to_both("✅ MANUAL FLATTEN EXECUTED")
+                            tracked_positions = state.state_manager.get_active_positions()
+                            for pos in list(tracked_positions):
+                                pos_symbol = pos.get('symbol', cmd_symbol)
+                                pos_type = 'LONG' if 'BUY' in pos.get('type', 'BUY').upper() else 'SHORT'
+                                current_price = self.adapter.get_current_price(pos_symbol)
+                                if current_price:
+                                    exit_size = pos.get('size', 1)
+                                    
+                                    # Tag for graceful engine exit and logging
+                                    pos['exit_triggered'] = True
+                                    pos['exit_time'] = time.time()
+                                    sig_id_to_send = pos.get('signal_id', pos.get('signal_timestamp'))
+                                    
+                                    if pos_type == 'LONG':
+                                        self.adapter.execute_sell(pos_symbol, exit_size, current_price, signal_id=sig_id_to_send)
+                                    else:
+                                        self.adapter.execute_buy(pos_symbol, exit_size, current_price, signal_id=sig_id_to_send)
+                                        
+                                    # --- REPLAY BYPASS: Force Broker Memory Wipe ---
+                                    if hasattr(state.state_manager, 'live_nt_positions'):
+                                        state.state_manager.live_nt_positions[pos_symbol] = 0
+                            
+                        elif action == 'TOGGLE_HOLD':
+                            state.state_manager.hold_override_active = not getattr(state.state_manager, 'hold_override_active', False)
+                            log_to_both(f"✅ MANUAL HOLD TOGGLED: {state.state_manager.hold_override_active}")
+
                     state.state_manager.cleanup_pending_signals()
 
                     # --- Cooldown period after a trade ---
                     in_cooldown = False
-                    if time.time() - self.last_trade_time < 300: # 5-minute cooldown
+                    if state.state_manager.get_current_time().timestamp() - self.last_trade_time < 300: # 5-minute cooldown
                         in_cooldown = True
 
                     # --- 60-Minute Time-Out Check ---
@@ -534,20 +658,37 @@ class MidasEngine(threading.Thread):
                                 print(f"❌ ANOMALY FIREWALL: Engine rejected cross-wired price for {symbol}. {last_price} -> {price}")
                                 continue
 
-                        if last_price is not None and symbol == 'MES':
-                            # Extract the volume of the last trade from the adapter
-                            volume = getattr(self.adapter, 'last_trade_volume', 1.0)
-                            state.state_manager.update_cvd(price, last_price, volume)
-
                         ema_15 = None
                         if hasattr(self.adapter, 'current_features'):
                             ema_15 = self.adapter.current_features.get(f'ema_15_{symbol.lower()}')
 
+                        # Safety check for dist_to_ema calculations
+                        dist_to_ema = 0.0
+                        if price is not None and ema_15 is not None:
+                            dist_to_ema = price - ema_15
+
                         chart_time = getattr(self.adapter, 'chart_time', None)
                         if chart_time is None and hasattr(self.adapter, 'current_features'):
                             chart_time = self.adapter.current_features.get('chart_time')
+                            # SURGICAL FIX: Force extraction from Market Depth payload if adapter didn't map it
+                        if chart_time is None and hasattr(self.adapter, 'get_market_depth'):
+                            _md = self.adapter.get_market_depth(symbol)
+                            if isinstance(_md, dict):
+                                chart_time = _md.get('chart_time') or _md.get('timestamp')
                         if chart_time:
                             state.state_manager.update_market_time(chart_time)
+
+                        # --- 🌅 THE CONTAMINATION RESET (8:45 AM EST) ---
+                        if state.state_manager.current_market_time:
+                            cmt = state.state_manager.current_market_time
+                            current_date_str = cmt.strftime("%Y-%m-%d")
+                            
+                            if (cmt.hour == 8 and cmt.minute >= 45) or cmt.hour > 8:
+                                if getattr(self, 'last_reset_date', None) != current_date_str:
+                                    log_to_both("--- 🌅 DAILY AUTO-RESET: Clearing PnL and Anchors for the New Day (8:45 AM EST) ---")
+                                    state.state_manager.reset_for_new_day()
+                                    state.state_manager.reset_daily_anchors()
+                                    self.last_reset_date = current_date_str
 
                         current_session = logic.get_market_session()
                         
@@ -556,14 +697,18 @@ class MidasEngine(threading.Thread):
                             logic.update_session_anchors(price, current_session)
                         
                         # 1. Distance to Floor
-                        dist_to_low = (price - state.state_manager.opening_range_low) if state.state_manager.opening_range_low is not None else "N/A"
+                        dist_to_low = "N/A"
+                        if price is not None and state.state_manager.opening_range_low is not None:
+                            dist_to_low = price - state.state_manager.opening_range_low
                         
                         # 2. Distance to Ceiling (Using getattr to prevent crashes if it's missing)
                         range_high = getattr(state.state_manager, 'opening_range_high', None)
-                        dist_to_high = (range_high - price) if range_high is not None else "N/A"
+                        dist_to_high = "N/A"
+                        if price is not None and range_high is not None:
+                            dist_to_high = range_high - price
                         
                         # 3. Print the full 360-degree view
-                        log_to_both(f"HEARTBEAT: {symbol} @ {price} | 15m EMA: {ema_15} | Session: {current_session} | Dist to Low: {dist_to_low} | Dist to High: {dist_to_high}")
+                        log_to_both(f"HEARTBEAT: {symbol} @ {price} | 15m EMA: {ema_15} | Dist to EMA: {dist_to_ema:.2f} | Session: {current_session} | Dist to Low: {dist_to_low} | Dist to High: {dist_to_high}")
                         state.state_manager.add_price(symbol, price)
                         log_to_both(f"--- CURRENT SESSION CVD: {state.state_manager.session_cvd} ---")
                         self.price_buffer[symbol].append(price)
@@ -626,6 +771,7 @@ class MidasEngine(threading.Thread):
 
                             # --- AI SUPERVISOR (RL AGENT) ---
                             ai_action = 0 # 0=Hold, 1=Buy, 2=Sell
+                            ema_200 = None
                             if self.rl_model and len(state.state_manager.price_history.get(symbol, [])) > 0:
                                 current_price = state.state_manager.price_history[symbol][-1]
                                 
@@ -656,7 +802,9 @@ class MidasEngine(threading.Thread):
                             if thresholds['halt']:
                                 pass
                             elif in_cooldown:
-                                log_to_both(f"--- ACTIVE PROFILE: COOLDOWN (Cooling down for {int(300 - (time.time() - self.last_trade_time))}s) ---")
+                                cooldown_remaining = 300 - (state.state_manager.get_current_time().timestamp() - self.last_trade_time)
+                                log_to_both(f"--- ACTIVE PROFILE: COOLDOWN (Cooling down for {int(cooldown_remaining)}s) ---")
+                                continue
                             elif in_timeout:
                                 log_to_both(f"--- ACTIVE PROFILE: TIME-OUT (Active for {int(state.state_manager.time_out_until - time.time())}s) ---")
                             elif chop_index > 50.0:
@@ -695,21 +843,21 @@ class MidasEngine(threading.Thread):
                                 # 0. Core Strategy Filters (Trend & Volatility)
                                 trend = signal.get('trend')
                                 market_trend = trend
-                                signal_direction = 'BUY' if 'BUY' in signal.get('type', '').upper() else 'SELL'
+                                signal_direction = signal.get('signal_direction')
+                                if not signal_direction:
+                                    signal_direction = 'LONG' if 'BUY' in signal.get('type', '').upper() else 'SHORT'
                                 
                                 if market_trend in ['BULLISH', 'BEARISH']:
-                                    if signal_direction == 'BUY' and market_trend == 'BULLISH':
+                                    if signal_direction == 'LONG' and market_trend == 'BULLISH':
                                         trend_pass = True
-                                    elif signal_direction == 'SELL' and market_trend == 'BEARISH':
+                                    elif signal_direction == 'SHORT' and market_trend == 'BEARISH':
                                         trend_pass = True
                                     else:
                                         trend_pass = False
                                     signal['trend_pass'] = trend_pass
                                 else:
-                                    trend_pass = signal.get('trend_pass', True)
-                                
-                                if 'Momentum' in signal.get('reason', '') or 'Dual-Core' in signal.get('reason', ''):
-                                    trend_pass = True
+                                    trend_pass = signal.get('trend_pass', False)
+                                    signal['trend_pass'] = trend_pass
 
                                 vol_pass = signal.get('volatility_pass', True)
                                 
@@ -804,19 +952,90 @@ class MidasEngine(threading.Thread):
                                     # Require the current setup to have at least 30% of the recent average volume
                                     required_effort = avg_cvd_effort * 0.20
                                     
-                                    if signal['type'] == 'BUY_SIGNAL' and micro_cvd_5m < required_effort:
-                                        cvd_pass = False
-                                        log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow Move: {micro_cvd_5m:.1f} vol vs Req {required_effort:.1f})")
-                                    elif signal['type'] == 'SELL_SIGNAL' and micro_cvd_5m > -required_effort:
-                                        cvd_pass = False
-                                        log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow Move: {micro_cvd_5m:.1f} vol vs Req {-required_effort:.1f})")
-                                    else:
-                                        log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: ±{required_effort:.1f})")
+                                    if signal_direction == 'LONG':
+                                        if micro_cvd_5m < 0 or abs(micro_cvd_5m) < required_effort:
+                                            cvd_pass = False
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow/Counter Move: {micro_cvd_5m:.1f} vol vs Req +{required_effort:.1f})")
+                                        else:
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: +{required_effort:.1f})")
+                                    elif signal_direction == 'SHORT':
+                                        if micro_cvd_5m > 0 or abs(micro_cvd_5m) < required_effort:
+                                            cvd_pass = False
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [FAIL] (Hollow/Counter Move: {micro_cvd_5m:.1f} vol vs Req -{required_effort:.1f})")
+                                        else:
+                                            log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Solid Volume: {micro_cvd_5m:.1f} | Req: -{required_effort:.1f})")
                                 else:
                                     log_to_both(f"[CHECK] Micro-CVD Guard: [PASS] (Warming up volume memory...)")
 
+                                # 6. The Brake Pedal (Tight Sideways Chop)
+                                brake_pedal_pass = True
+                                current_chop = getattr(state.state_manager, 'current_chop_index', 50.0)
+                                if ema_15 is not None:
+                                    dist_to_ema_abs = abs(price - ema_15)
+                                    if current_chop > 55.0 and dist_to_ema_abs < 2.0:
+                                        brake_pedal_pass = False
+                                        log_to_both("[VETOED] BRAKE PEDAL ACTIVE: Market is chopping tightly around the EMA.")
+                                    else:
+                                        log_to_both("[CHECK] Brake Pedal: [PASS]")
+                                else:
+                                    log_to_both("[CHECK] Brake Pedal: [PASS] (No EMA)")
+
+                                # 7. The Macro Guard (The "Step Back")
+                                macro_pass = True
+                                
+                                # Ensure ema_200 is loaded if RL agent was skipped
+                                if ema_200 is None and hasattr(self.adapter, 'current_features'):
+                                    ema_200 = self.adapter.current_features.get('ema_200_val')
+                                
+                                # Only enforce the Macro Guard if we are in Trending Mode
+                                if ema_200 is not None and ema_200 != price and chop_index <= 50.0:
+                                    if signal_direction == 'LONG' and price < ema_200:
+                                        macro_pass = False
+                                        log_to_both(f"[CHECK] Macro Guard: [FAIL] (Price below 200 EMA. Vetoing counter-trend LONG)")
+                                    elif signal_direction == 'SHORT' and price > ema_200:
+                                        macro_pass = False
+                                        log_to_both(f"[CHECK] Macro Guard: [FAIL] (Price above 200 EMA. Vetoing counter-trend SHORT)")
+                                    else:
+                                        log_to_both(f"[CHECK] Macro Guard: [PASS] (Aligned with Macro Trend)")
+                                else:
+                                    log_to_both(f"[CHECK] Macro Guard: [PASS] (Chop Mode Active)")
+
                                 # FINAL DECISION
-                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass):
+                                trend_desc = 'BULLISH' if market_trend == 'BULLISH' else 'BEARISH'
+                                
+                                if chop_index > 50.0:
+                                    macro_desc = 'CHOP'
+                                elif ema_200 is not None and price > ema_200:
+                                    macro_desc = 'UPTREND'
+                                elif ema_200 is not None and price < ema_200:
+                                    macro_desc = 'DOWNTREND'
+                                else:
+                                    macro_desc = 'UNKNOWN'
+                                    
+                                brake_desc = 'CLEAR' if brake_pedal_pass else 'ENGAGED'
+                                pos_desc = 'READY' if pos_guard_pass else 'LOCKED'
+                                vol_desc = 'HEALTHY' if vol_pass else 'LOW VOL'
+
+                                telemetry_payload = {
+                                    'trend_pass': trend_pass,
+                                    'vol_pass': vol_pass,
+                                    'ml_pass': ml_pass,
+                                    'rl_pass': rl_pass,
+                                    'pos_guard_pass': pos_guard_pass,
+                                    'cvd_pass': cvd_pass,
+                                    'brake_pedal_pass': brake_pedal_pass,
+                                    'macro_pass': macro_pass,
+                                    'ml_confidence': float(ml_val) if ml_val is not None else 0.0,
+                                    'trend_desc': trend_desc,
+                                    'macro_desc': macro_desc,
+                                    'brake_desc': brake_desc,
+                                    'pos_desc': pos_desc,
+                                    'vol_desc': vol_desc,
+                                    'atr_value': float(current_atr) if current_atr is not None else 0.0
+                                }
+                                state.state_manager.latest_telemetry = telemetry_payload
+
+                                if not (trend_pass and vol_pass and ml_pass and rl_pass and pos_guard_pass and cvd_pass and brake_pedal_pass and macro_pass):
                                     log_to_both("--- FINAL DECISION: [VETOED] ---")
                                     if not state.state_manager.dev_mode:
                                         continue
@@ -878,16 +1097,27 @@ class MidasEngine(threading.Thread):
                                                             side_to_send = 'SELL' # Default for regular signals
                                                             if signal.get('signal_direction') == 'SHORT':
                                                                 side_to_send = 'SHORT' # Override for AI Short signal
+                                                                pos_type = 'SHORT'
                                                             trade_executed = self.adapter.execute_sell(symbol, dynamic_size, exec_price, signal_id=str(signal.get('id')), side=side_to_send)
                                                         
                                                         if trade_executed:
+                                                            # --- REPLAY BYPASS: Force Broker Memory Update ---
+                                                            # Since NT8 drops entry receipts in replay mode, forcefully assume it filled immediately.
+                                                            if not hasattr(state.state_manager, 'live_nt_positions'):
+                                                                state.state_manager.live_nt_positions = {}
+                                                            current_qty = state.state_manager.live_nt_positions.get(symbol, 0)
+                                                            if pos_type == 'SHORT':
+                                                                state.state_manager.live_nt_positions[symbol] = current_qty - dynamic_size
+                                                            else:
+                                                                state.state_manager.live_nt_positions[symbol] = current_qty + dynamic_size
                                                             position = {
                                                                 'symbol': symbol,
                                                                 'entry_price': exec_price,
                                                                 'size': dynamic_size,
                                                                 'type': pos_type,
-                                                                'timestamp': time.time(),
-                                                                'signal_timestamp': float(signal['timestamp']),
+                                                                'timestamp': state.state_manager.get_current_time().timestamp(),
+                                                                'real_timestamp': time.time(),
+                                                                'signal_timestamp': float(signal.get('timestamp', state.state_manager.get_current_time().timestamp())),
                                                                 'signal_id': signal.get('id', '')
                                                             }
                                                             
@@ -904,7 +1134,7 @@ class MidasEngine(threading.Thread):
                                                                     print(f"Logger warning: {e}")
                                                                 
                                                                 # --- ENTRY TRIGGER: Start Log Capture ---
-                                                                sig_id_str = str(position['signal_timestamp'])
+                                                                sig_id_str = str(position.get('signal_id', position.get('signal_timestamp')))
                                                                 state.state_manager.active_trade_logs[sig_id_str] = list(state.state_manager.log_rolling_buffer)[-200:]
                                                                 log_to_both(f"--- LOG CAPTURE STARTED FOR SIGNAL {sig_id_str} ---")
                                                             log_to_both(f"✅ AUTO-TRADE EXECUTED: {symbol} at {exec_price} ({pos_type})")
