@@ -369,6 +369,14 @@ def manual_override():
         return jsonify({'status': 'success', 'message': f'Manual action {action} queued.'})
     return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
 
+@app.route('/api/toggle_diamond_hands', methods=['POST'])
+@login_required
+def toggle_diamond_hands():
+    from core.state import state_manager
+    current_state = getattr(state_manager, 'diamond_hands_active', False)
+    state_manager.diamond_hands_active = not current_state
+    return jsonify({'status': 'success', 'diamond_hands': state_manager.diamond_hands_active})
+
 @app.route('/approve_signal/<string:signal_id>', methods=['POST'])
 @login_required
 def approve_signal(signal_id):

@@ -73,6 +73,7 @@ class StateManager:
         self.active_trade_logs = {}
         self.manual_command_queue = []
         self.hold_override_active = False
+        self.diamond_hands_active = False
         self.load_price_history()
 
     def toggle_dev_mode(self):

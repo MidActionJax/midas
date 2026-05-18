@@ -225,24 +225,24 @@ def get_dynamic_thresholds():
         if now_est >= power_hour_end and now_est < halt_end:
             if not getattr(state_manager, 'ignore_scheduler', False):
                 return {'min_confidence': 100.0, 'halt': True, 'min_atr': 2.0, 'strategy': 'NONE'}
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         elif now_est >= halt_end or now_est < asian_end:
             return {'min_confidence': 80.0, 'halt': False, 'min_atr': 0.20, 'strategy': 'MEAN_REVERSION'}
 
         if now_est < datetime_time(9, 30):
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         elif now_est < open_end:
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         elif now_est < trend_est_end:
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         elif now_est < lunch_chop_end:
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'} #change back to 95
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         elif now_est < reset_end:
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         elif now_est < power_hour_end:
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.50, 'strategy': 'ALL'}
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}
         else:
-            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}  # After hours
+            return {'min_confidence': 80.0, 'halt': False, 'min_atr': 1.25, 'strategy': 'ALL'}  # After hours
     except Exception as e:
         return {'min_confidence': 75.0, 'halt': False, 'min_atr': 2.0, 'strategy': 'ALL'}
 
@@ -728,15 +728,19 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
         if mid_price is not None and sma_60 is not None:
             distance_from_sma60 = mid_price - sma_60
 
+        # Long Specific Features
+        spread = best_ask - best_bid
+        imbalance_delta_5s = imbalance - list(dc_memory.imbalance_hist)[-6] if len(dc_memory.imbalance_hist) >= 6 else 0.0
+
         # 3. THE SPLIT-BRAIN ROUTER
         if trend_alignment > 0 and TRUTH_ENGINE_LONG:
             active_brain = "LONG"
             features = pd.DataFrame([{
                 'Bid_Vol': bid_vol,
-                'Best_Bid': best_bid,
                 'Ask_Vol': ask_vol,
-                'Best_Ask': best_ask,
-                'Mid_Price': mid_price,
+                'Imbalance': imbalance,
+                'Imbalance_Delta_5s': imbalance_delta_5s,
+                'Spread': spread,
                 'Hour': current_hour,
                 'Trend_Alignment': trend_alignment,
                 'Volatility_60s': volatility_60s,
@@ -795,7 +799,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
             ml_score_pct = min(ml_score_pct, 100.0)
 
             # --- AI SNIPER TRIGGER ---
-            # Set asymmetric thresholds: Escalator Up (85%), Elevator Down (84%)
+            # Set optimized thresholds from Grid Search
             target_threshold = 80.0 if active_brain == 'LONG' else 80.0
             
             # If the AI is confident, it creates its own signal even if no iceberg exists!
