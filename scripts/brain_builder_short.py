@@ -91,7 +91,7 @@ print("📊 THRESHOLD TESTING (SHORT BRAIN)")
 
 # We will test what happens if we force the bot to be 60%, 70%, and 80% confident
 # Testing extreme sniper thresholds
-for threshold in [0.60, 0.70, 0.80, 0.85, 0.90, 0.95]:
+for threshold in [0.51, 0.53, 0.55, 0.57, 0.60]:
     # Create a new list of predictions based on our strict threshold
     strict_predictions = (probabilities >= threshold).astype(int)
     

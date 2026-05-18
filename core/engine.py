@@ -326,6 +326,18 @@ class MidasEngine(threading.Thread):
                         if riding_trend:
                             stagnation_signal = None
 
+                        # --- THE DIAMOND HANDS OVERRIDE ---
+                        if getattr(state.state_manager, 'diamond_hands_active', False):
+                            hit_tp = False
+                            hit_sl = False
+                            hit_time_kill = False
+                            stagnation_signal = None
+                            
+                            current_time = time.time()
+                            if current_time - pos.get('last_dh_log_time', 0) >= 10:
+                                log_to_both(f"💎 [DIAMOND HANDS] Holding {pos_symbol} open. All AI Exits disabled.")
+                                pos['last_dh_log_time'] = current_time
+
                         if hit_tp or hit_sl or hit_time_kill or stagnation_signal:
                             if pos.get('exit_triggered'):
                                 pass  # Exit order already sent. Waiting for broker confirmation.

@@ -33,11 +33,14 @@ print("🧹 Cleaning up the edges...")
 # They will be blank (NaN). We must drop them so the AI doesn't crash.
 df.dropna(inplace=True)
 
+# Calculate the spread (relative distance) instead of raw prices
+df['Spread'] = df['Best_Ask'] - df['Best_Bid']
+
 # --- 2. DEFINE THE RULES OF THE GAME ---
-# We are PRUNING the dead weight. We removed Minute, Imbalance, and Imbalance_Delta.
+# Removed raw prices to cure Non-Stationarity bias
 features = [
-    'Bid_Vol', 'Best_Bid', 'Ask_Vol', 'Best_Ask', 
-    'Mid_Price', 'Hour', 'Trend_Alignment', 'Volatility_60s', 'Session_CVD'
+    'Bid_Vol', 'Ask_Vol', 'Imbalance', 'Imbalance_Delta_5s', 
+    'Spread', 'Hour', 'Trend_Alignment', 'Volatility_60s', 'Session_CVD'
 ]
 X = df[features]
 y = df['Target']
@@ -52,7 +55,7 @@ y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
 print("⚙️ Unleashing the Random Forest... (The AI is building its checklist now)")
 # NOTICE n_jobs=-1: This forces your computer to use EVERY CPU core to train faster!
 # We removed class_weight='balanced' to cure its paranoia, and increased max_depth to 20 to let it think deeper!
-model = RandomForestClassifier(n_estimators=100, max_depth=20, random_state=42, n_jobs=-1)
+model = RandomForestClassifier(n_estimators=150, max_depth=25, random_state=42, n_jobs=-1, class_weight='balanced')
 model.fit(X_train, y_train)
 
 # --- 5. TAKE THE FINAL EXAM (PROBABILITIES) ---
@@ -66,7 +69,7 @@ print("📊 THRESHOLD TESTING")
 
 # We will test what happens if we force the bot to be 60%, 70%, and 80% confident
 # Testing extreme sniper thresholds
-for threshold in [0.60, 0.70, 0.80, 0.85, 0.90, 0.95]:
+for threshold in [0.51, 0.53, 0.55, 0.57, 0.60]:
     # Create a new list of predictions based on our strict threshold
     strict_predictions = (probabilities >= threshold).astype(int)
     

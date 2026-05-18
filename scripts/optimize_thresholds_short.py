@@ -85,7 +85,7 @@ def run_grid_search():
 
     # 4. Define the Grid
     atr_thresholds = [0.50, 0.75, 1.00, 1.25, 1.50]
-    confidence_thresholds = [60.0, 70.0, 80.0, 85.0, 90.0]
+    confidence_thresholds = [52.0, 54.0, 56.0, 58.0, 60.0]
     
     results = []
 

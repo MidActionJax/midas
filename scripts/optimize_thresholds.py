@@ -12,8 +12,8 @@ DATA_DIR = os.path.join(BASE_DIR, 'data', 'lvl_2_clean')
 
 # The model features exactly as defined in brain_builder.py
 FEATURES = [
-    'Bid_Vol', 'Best_Bid', 'Ask_Vol', 'Best_Ask', 
-    'Mid_Price', 'Hour', 'Trend_Alignment', 'Volatility_60s', 'Session_CVD'
+    'Bid_Vol', 'Ask_Vol', 'Imbalance', 'Imbalance_Delta_5s', 
+    'Spread', 'Hour', 'Trend_Alignment', 'Volatility_60s', 'Session_CVD'
 ]
 TARGET_COL = 'Target'
 ATR_COL = 'Volatility_60s'  # We use Volatility_60s as our historical ATR equivalent
@@ -47,6 +47,9 @@ def run_grid_search():
     if 'Mid_Price' not in df.columns:
         df['Mid_Price'] = (df['Best_Bid'] + df['Best_Ask']) / 2
         
+    df['Spread'] = df['Best_Ask'] - df['Best_Bid']
+    df['Imbalance_Delta_5s'] = df['Imbalance'].diff(5)
+
     df['SMA_30'] = df['Mid_Price'].rolling(window=30).mean()
     df['SMA_60'] = df['Mid_Price'].rolling(window=60).mean()
     df['Trend_Alignment'] = df['SMA_30'] - df['SMA_60']
@@ -82,7 +85,7 @@ def run_grid_search():
 
     # 4. Define the Grid
     atr_thresholds = [0.50, 0.75, 1.00, 1.25, 1.50]
-    confidence_thresholds = [80.0, 85.0, 90.0, 95.0]
+    confidence_thresholds = [52.0, 54.0, 56.0, 58.0, 60.0]
     
     results = []
 
