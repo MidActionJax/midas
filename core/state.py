@@ -44,7 +44,7 @@ class StateManager:
         self.auto_buy_enabled = False
         self.last_trade_time = 0
         self.current_chop_index = 50.0
-        self.MAX_DAILY_LOSS = -250.00
+        self.MAX_DAILY_LOSS = -500.00
         self.circuit_breaker_tripped = False
         self.current_market_time = None
         self.session_cvd = 0.0
