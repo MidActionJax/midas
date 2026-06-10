@@ -254,7 +254,7 @@ class MidasEngine(threading.Thread):
                             if state.state_manager.is_concrete_wet:
                                 pos['dynamic_sl'] = max(-6.0, - (1.5 * current_atr))
                             else:
-                                pos['dynamic_sl'] = -2.0
+                                pos['dynamic_sl'] = -6.0
                             
                         # --- DIAGNOSTIC HEARTBEAT LOG ---
                         current_time = time.time()
@@ -262,22 +262,27 @@ class MidasEngine(threading.Thread):
                             log_to_both(f"💓 [HEARTBEAT] {pos_symbol} {pos_type} | Profit: {points_profit:.2f} pts | SL: {pos.get('dynamic_sl', -1.0):.2f}")
                             pos['last_pnl_log_time'] = current_time
 
-                        # --- TASK 2: TIERED RATCHET (GEARS) ---
-                        if pos['max_profit'] > 5.0 * current_atr:
-                            new_sl = pos['max_profit'] - (3.0 * current_atr)
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- GEAR 3 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] > 3.0 * current_atr:
-                            new_sl = pos['max_profit'] - (1.5 * current_atr)
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- GEAR 2 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] > 1.0 * current_atr:
-                            new_sl = 0.25
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- GEAR 1 AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        # --- TASK 2: TIERED RATCHET (IMPROVED SNIPER GEARS) ---
+                        calculated_sl = pos['dynamic_sl'] # Start with current SL
+                        
+                        # Calculate Gear 2 (Breakeven)
+                        if pos['max_profit'] >= 3.5:
+                            calculated_sl = max(calculated_sl, 0.50)
+                            
+                        # Calculate Gear 3 (The Runner)
+                        if pos['max_profit'] >= 4.0:
+                            # Trail by 1.25x the current volatility. If ATR is 3.12, trail is ~3.9 pts.
+                            dynamic_trail = max(2.50, 1.25 * current_atr) 
+                            runner_sl = max(pos['max_profit'] - dynamic_trail, 1.00)
+                            calculated_sl = max(calculated_sl, runner_sl)
+                            
+                        # Apply the highest possible protection
+                        if calculated_sl > pos['dynamic_sl']:
+                            if calculated_sl >= 1.00:
+                                log_to_both(f"--- GEAR 3 PROFIT LOCK: {pos_symbol} SL moved to +{calculated_sl:.2f} ---")
+                            elif calculated_sl == 0.50:
+                                log_to_both(f"--- GEAR 2 AUTO-BREAKEVEN: {pos_symbol} SL moved to +{calculated_sl:.2f} ---")
+                            pos['dynamic_sl'] = calculated_sl
                                  
                         # Remove the hard ceiling
                         hit_tp = False 
@@ -315,7 +320,7 @@ class MidasEngine(threading.Thread):
                         
                         # --- STAGNATION TIGHTENER ---
                         if time_open > 120 and not riding_trend:
-                            new_sl = pos['max_profit'] - 1.5
+                            new_sl = pos['max_profit'] - 2.75
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
                                 log_to_both(f"--- STAGNATION TIGHTENER: {pos_symbol} SL moved to {new_sl:.2f} ---")
@@ -329,7 +334,7 @@ class MidasEngine(threading.Thread):
                         # --- THE DIAMOND HANDS OVERRIDE ---
                         if getattr(state.state_manager, 'diamond_hands_active', False):
                             hit_tp = False
-                            hit_sl = False
+                            hit_sl = points_profit <= -10.0
                             hit_time_kill = False
                             stagnation_signal = None
                             
@@ -594,7 +599,9 @@ class MidasEngine(threading.Thread):
                                     'timestamp': state.state_manager.get_current_time().timestamp(),
                                     'real_timestamp': time.time(),
                                     'signal_timestamp': time.time(),
-                                    'signal_id': signal_id
+                                    'signal_id': signal_id,
+                                    'max_profit': 0.0,           # <--- CLEARS THE GHOST
+                                    'unrealized_pnl': 0.0        # <--- CLEARS THE GHOST
                                 }
                                 state.state_manager.add_position(position)
                                 
@@ -1130,7 +1137,9 @@ class MidasEngine(threading.Thread):
                                                                 'timestamp': state.state_manager.get_current_time().timestamp(),
                                                                 'real_timestamp': time.time(),
                                                                 'signal_timestamp': float(signal.get('timestamp', state.state_manager.get_current_time().timestamp())),
-                                                                'signal_id': signal.get('id', '')
+                                                                'signal_id': signal.get('id', ''),
+                                                                'max_profit': 0.0,           # <--- CLEARS THE GHOST
+                                                                'unrealized_pnl': 0.0        # <--- CLEARS THE GHOST
                                                             }
                                                             
                                                             # Deduplication Logic

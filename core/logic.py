@@ -1172,16 +1172,16 @@ def analyze_stagnation_exit(symbol, current_price, position_data):
     
     chop = getattr(state_manager, 'current_chop_index', 50.0)
     if chop < 45.0:
-        base_heartbeats = 150
+        base_heartbeats = 300
     elif chop > 55.0:
-        base_heartbeats = 50
+        base_heartbeats = 150
     else:
-        base_heartbeats = 75
+        base_heartbeats = 200
     
     # Adjust inversely proportional to ATR.
     safe_atr = max(atr, 0.5) # Prevent division by zero
     dynamic_threshold = int(base_heartbeats * (2.0 / safe_atr))
-    dynamic_threshold = max(25, min(dynamic_threshold, 150)) # Clamp bounds between 25 and 150
+    dynamic_threshold = max(60, min(dynamic_threshold, 300)) # Clamp bounds between 25 and 150
     
     if elapsed_seconds >= dynamic_threshold:
         # Suppress constant printing by letting engine.py log it on execution
