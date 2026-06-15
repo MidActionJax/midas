@@ -251,10 +251,7 @@ class MidasEngine(threading.Thread):
                         current_atr = logic.get_current_atr(price_hist) if price_hist else 2.0
 
                         if 'dynamic_sl' not in pos:
-                            if state.state_manager.is_concrete_wet:
-                                pos['dynamic_sl'] = max(-6.0, - (1.5 * current_atr))
-                            else:
-                                pos['dynamic_sl'] = -6.0
+                            pos['dynamic_sl'] = -6.0
                             
                         # --- DIAGNOSTIC HEARTBEAT LOG ---
                         current_time = time.time()
