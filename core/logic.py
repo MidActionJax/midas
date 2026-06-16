@@ -197,6 +197,17 @@ def get_market_session():
         print(f"Error getting market session: {e}")
         return "Unknown"
 
+def get_market_environment_status(chop_index, current_atr):
+    """
+    Evaluates the market environment based on Choppiness Index and ATR.
+    """
+    if chop_index > 55.0 and current_atr < 1.5:
+        return 'ZONE RED'
+    elif chop_index < 45.0 and current_atr >= 2.0:
+        return 'ZONE GREEN'
+    else:
+        return 'ZONE YELLOW'
+
 def get_dynamic_thresholds():
     """
     Dynamic Session Profiler: Returns the minimum ML confidence required 

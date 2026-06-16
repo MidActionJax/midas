@@ -245,6 +245,7 @@ class MidasEngine(threading.Thread):
                         multiplier = 5.0 if pos_symbol == 'MES' else 2.0
                         pos['unrealized_pnl'] = points_profit * multiplier * pos.get('size', 1)
                         pos['max_profit'] = max(pos.get('max_profit', points_profit), points_profit)
+                        pos['max_drawdown'] = min(pos.get('max_drawdown', points_profit), points_profit)
                         
                         # Calculate ATR continuously for dynamic trailing
                         price_hist = state.state_manager.price_history.get(pos_symbol, [])
@@ -429,6 +430,44 @@ class MidasEngine(threading.Thread):
 
                     final_pnl = pos.get('unrealized_pnl', 0.0)
                     
+                    # --- ACHIEVEMENT BADGES EVALUATION ---
+                    multiplier = 5.0 if pos.get('symbol', '') == 'MES' else 2.0
+                    pos_size = pos.get('size', 1)
+                    final_pnl_points = final_pnl / (multiplier * pos_size) if pos_size > 0 else 0
+                    time_open_sec = time.time() - pos.get('real_timestamp', time.time())
+                    
+                    earned_badges = []
+                    if final_pnl_points > 0 and pos.get('max_drawdown', 0) >= -1.0:
+                        earned_badges.append('The Sniper')
+                    if final_pnl_points > 3.0 and time_open_sec > 180:
+                        earned_badges.append('Diamond Hands')
+                    if final_pnl_points <= -6.0:
+                        earned_badges.append('Iron Shield')
+                        
+                    for badge in earned_badges:
+                        badge_entry = {'badge': badge, 'symbol': pos.get('symbol', ''), 'pnl': final_pnl, 'time': time.time()}
+                        with state.state_manager._lock:
+                            if not hasattr(state.state_manager, 'recent_badges'):
+                                state.state_manager.recent_badges = []
+                            state.state_manager.recent_badges.insert(0, badge_entry)
+                            state.state_manager.recent_badges = state.state_manager.recent_badges[:10]
+                        log_to_both(f"🏆 ACHIEVEMENT UNLOCKED: {badge}!")
+
+                    # --- DISCIPLINE XP EVALUATION ---
+                    env_at_entry = pos.get('entry_environment', 'UNKNOWN')
+                    xp_awarded = 0
+                    if env_at_entry == 'ZONE GREEN':
+                        xp_awarded = 50
+                    elif env_at_entry == 'ZONE YELLOW':
+                        xp_awarded = 10
+                    elif env_at_entry == 'ZONE RED':
+                        xp_awarded = -50
+                        
+                    if not hasattr(state.state_manager, 'daily_discipline_xp'):
+                        state.state_manager.daily_discipline_xp = 0
+                    state.state_manager.daily_discipline_xp += xp_awarded
+                    log_to_both(f"🎮 DISCIPLINE XP: {xp_awarded:+d} (Entry in {env_at_entry}) | Daily Total: {state.state_manager.daily_discipline_xp}")
+
                     sig_id = pos.get('signal_id')
                     if not sig_id:
                         sig_id = pos.get('signal_timestamp')
@@ -450,6 +489,7 @@ class MidasEngine(threading.Thread):
                         if sig_id_str in state.state_manager.active_trade_logs:
                             log_lines = state.state_manager.active_trade_logs.pop(sig_id_str)
                             log_lines.append(f"FINAL PNL: {final_pnl}")
+                            log_lines.append(f"DISCIPLINE XP AWARDED: {xp_awarded}")
                             
                             outcome = "WIN" if final_pnl > 0 else "LOSS"
                             os.makedirs(os.path.join("logs", "post_mortem"), exist_ok=True)
@@ -598,7 +638,8 @@ class MidasEngine(threading.Thread):
                                     'signal_timestamp': time.time(),
                                     'signal_id': signal_id,
                                     'max_profit': 0.0,           # <--- CLEARS THE GHOST
-                                    'unrealized_pnl': 0.0        # <--- CLEARS THE GHOST
+                                    'unrealized_pnl': 0.0,       # <--- CLEARS THE GHOST
+                                    'entry_environment': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN')
                                 }
                                 state.state_manager.add_position(position)
                                 
@@ -784,6 +825,10 @@ class MidasEngine(threading.Thread):
                             state.state_manager.set_market_data(symbol, market_depth)
 
                             chop_index = state.state_manager.current_chop_index
+                            
+                            # --- ENVIRONMENT GAUGE ---
+                            env_atr = logic.get_current_atr(state.state_manager.price_history.get(symbol, []))
+                            state.state_manager.market_environment_status = logic.get_market_environment_status(chop_index, env_atr)
 
                             # --- AI SUPERVISOR (RL AGENT) ---
                             ai_action = 0 # 0=Hold, 1=Buy, 2=Sell
@@ -1136,7 +1181,8 @@ class MidasEngine(threading.Thread):
                                                                 'signal_timestamp': float(signal.get('timestamp', state.state_manager.get_current_time().timestamp())),
                                                                 'signal_id': signal.get('id', ''),
                                                                 'max_profit': 0.0,           # <--- CLEARS THE GHOST
-                                                                'unrealized_pnl': 0.0        # <--- CLEARS THE GHOST
+                                                                'unrealized_pnl': 0.0,       # <--- CLEARS THE GHOST
+                                                                'entry_environment': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN')
                                                             }
                                                             
                                                             # Deduplication Logic
