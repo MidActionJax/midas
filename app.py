@@ -53,18 +53,18 @@ def get_performance_stats():
     realized_pnl = 0
     try:
         if os.path.exists('trade_history.csv') and os.stat('trade_history.csv').st_size > 0:
-            df = pd.read_csv('trade_history.csv')
-            if 'final_pnl' in df.columns:
-                df['final_pnl'] = pd.to_numeric(df['final_pnl'], errors='coerce')
-                closed_trades = df[df['final_pnl'].notna()]
-                closed_trades = closed_trades[closed_trades['final_pnl'] != 0.0]
+            df = pd.read_csv('trade_history.csv', header=None)
+            if len(df.columns) > 13:
+                df[13] = pd.to_numeric(df[13], errors='coerce')
+                closed_trades = df[df[13].notna()]
+                closed_trades = closed_trades[closed_trades[13] != 0.0]
                 if not closed_trades.empty:
-                    wins = closed_trades[closed_trades['final_pnl'] > 0]
-                    losses = closed_trades[closed_trades['final_pnl'] <= 0]
-                    avg_win = wins['final_pnl'].mean() if not wins.empty else 0
-                    avg_loss = losses['final_pnl'].mean() if not losses.empty else 0
+                    wins = closed_trades[closed_trades[13] > 0]
+                    losses = closed_trades[closed_trades[13] <= 0]
+                    avg_win = wins[13].mean() if not wins.empty else 0
+                    avg_loss = losses[13].mean() if not losses.empty else 0
                     total_trades = int(len(closed_trades))
-                    realized_pnl = closed_trades['final_pnl'].sum()
+                    realized_pnl = closed_trades[13].sum()
                     if live_trades == 0:
                         win_rate = (len(wins) / total_trades) * 100 if total_trades > 0 else 0
     except Exception:
@@ -174,22 +174,22 @@ def status():
     pnl_history = []
     try:
         if os.path.exists('trade_history.csv'):
-            df_eq = pd.read_csv('trade_history.csv')
-            if 'final_pnl' in df_eq.columns:
-                df_eq['final_pnl'] = pd.to_numeric(df_eq['final_pnl'], errors='coerce')
-                df_eq = df_eq[df_eq['final_pnl'].notna()]
-                df_eq = df_eq[df_eq['final_pnl'] != 0.0]
+            df_eq = pd.read_csv('trade_history.csv', header=None)
+            if len(df_eq.columns) > 13:
+                df_eq[13] = pd.to_numeric(df_eq[13], errors='coerce')
+                df_eq = df_eq[df_eq[13].notna()]
+                df_eq = df_eq[df_eq[13] != 0.0]
                 if not df_eq.empty:
-                    df_eq = df_eq.sort_values(by='timestamp_id', ascending=True)
+                    df_eq = df_eq.sort_values(by=0, ascending=True)
                     
                     pnl_history = [0.0]
                     pnl_labels = ['Start']
                     
                     running_total = 0.0
                     for _, row in df_eq.iterrows():
-                        running_total += float(row['final_pnl'])
+                        running_total += float(row[13])
                         pnl_history.append(round(running_total, 2))
-                        time_str = datetime.datetime.fromtimestamp(float(row['timestamp_id'])).strftime('%H:%M')
+                        time_str = datetime.datetime.fromtimestamp(float(row[0])).strftime('%H:%M')
                         pnl_labels.append(time_str)
     except Exception as e:
         print(f"Error generating equity curve: {e}")
