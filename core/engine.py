@@ -234,16 +234,32 @@ class MidasEngine(threading.Thread):
                     
                     current_price = self.adapter.get_current_price(pos_symbol)
                     entry_price = pos.get('entry_price')
-                    
+
                     if current_price and entry_price:
                         is_long = pos_type == 'LONG'
                         
+                        # --- CALCULATE TRUE AVERAGE ENTRY ACROSS ALL BULLETS ---
+                        total_size = 0
+                        total_value = 0
+                        for p in tracked_positions:
+                            if p.get('symbol') == pos_symbol and not p.get('exit_triggered'):
+                                p_type = 'LONG' if 'BUY' in p.get('type', 'BUY').upper() else 'SHORT'
+                                if p_type == pos_type:
+                                    sz = p.get('size', 1)
+                                    total_size += sz
+                                    total_value += p.get('entry_price', entry_price) * sz
+                                    
+                        avg_entry = total_value / total_size if total_size > 0 else entry_price
+                        
                         # --- TIGHTER MICRO-PROFIT PROTECTORS ---
-                        points_profit = (current_price - entry_price) if is_long else (entry_price - current_price)
+                        points_profit = (current_price - avg_entry) if is_long else (avg_entry - current_price)
                         
                         # Estimate unrealized PnL manually for the logger 
+                        # Estimate PnL and deduct Reality Tax ($1.90 Comm + $2.50 Execution Slippage)
                         multiplier = 5.0 if pos_symbol == 'MES' else 2.0
-                        pos['unrealized_pnl'] = points_profit * multiplier * pos.get('size', 1)
+                        raw_pnl = points_profit * multiplier * pos.get('size', 1)
+                        reality_tax = 4.40 * pos.get('size', 1)
+                        pos['unrealized_pnl'] = raw_pnl - reality_tax
                         pos['max_profit'] = max(pos.get('max_profit', points_profit), points_profit)
                         pos['max_drawdown'] = min(pos.get('max_drawdown', points_profit), points_profit)
                         
