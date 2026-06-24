@@ -15,6 +15,7 @@ import threading
 from models.rl_agent import retrain_agent
 import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
+from leaderboard_engine import get_leaderboard_stats
 
 app = Flask(__name__)
 load_dotenv()
@@ -52,18 +53,18 @@ def get_performance_stats():
     realized_pnl = 0
     try:
         if os.path.exists('trade_history.csv') and os.stat('trade_history.csv').st_size > 0:
-            df = pd.read_csv('trade_history.csv')
-            if 'final_pnl' in df.columns:
-                df['final_pnl'] = pd.to_numeric(df['final_pnl'], errors='coerce')
-                closed_trades = df[df['final_pnl'].notna()]
-                closed_trades = closed_trades[closed_trades['final_pnl'] != 0.0]
+            df = pd.read_csv('trade_history.csv', header=None)
+            if len(df.columns) > 13:
+                df[13] = pd.to_numeric(df[13], errors='coerce')
+                closed_trades = df[df[13].notna()]
+                closed_trades = closed_trades[closed_trades[13] != 0.0]
                 if not closed_trades.empty:
-                    wins = closed_trades[closed_trades['final_pnl'] > 0]
-                    losses = closed_trades[closed_trades['final_pnl'] <= 0]
-                    avg_win = wins['final_pnl'].mean() if not wins.empty else 0
-                    avg_loss = losses['final_pnl'].mean() if not losses.empty else 0
+                    wins = closed_trades[closed_trades[13] > 0]
+                    losses = closed_trades[closed_trades[13] <= 0]
+                    avg_win = wins[13].mean() if not wins.empty else 0
+                    avg_loss = losses[13].mean() if not losses.empty else 0
                     total_trades = int(len(closed_trades))
-                    realized_pnl = closed_trades['final_pnl'].sum()
+                    realized_pnl = closed_trades[13].sum()
                     if live_trades == 0:
                         win_rate = (len(wins) / total_trades) * 100 if total_trades > 0 else 0
     except Exception:
@@ -173,22 +174,22 @@ def status():
     pnl_history = []
     try:
         if os.path.exists('trade_history.csv'):
-            df_eq = pd.read_csv('trade_history.csv')
-            if 'final_pnl' in df_eq.columns:
-                df_eq['final_pnl'] = pd.to_numeric(df_eq['final_pnl'], errors='coerce')
-                df_eq = df_eq[df_eq['final_pnl'].notna()]
-                df_eq = df_eq[df_eq['final_pnl'] != 0.0]
+            df_eq = pd.read_csv('trade_history.csv', header=None)
+            if len(df_eq.columns) > 13:
+                df_eq[13] = pd.to_numeric(df_eq[13], errors='coerce')
+                df_eq = df_eq[df_eq[13].notna()]
+                df_eq = df_eq[df_eq[13] != 0.0]
                 if not df_eq.empty:
-                    df_eq = df_eq.sort_values(by='timestamp_id', ascending=True)
+                    df_eq = df_eq.sort_values(by=0, ascending=True)
                     
                     pnl_history = [0.0]
                     pnl_labels = ['Start']
                     
                     running_total = 0.0
                     for _, row in df_eq.iterrows():
-                        running_total += float(row['final_pnl'])
+                        running_total += float(row[13])
                         pnl_history.append(round(running_total, 2))
-                        time_str = datetime.datetime.fromtimestamp(float(row['timestamp_id'])).strftime('%H:%M')
+                        time_str = datetime.datetime.fromtimestamp(float(row[0])).strftime('%H:%M')
                         pnl_labels.append(time_str)
     except Exception as e:
         print(f"Error generating equity curve: {e}")
@@ -227,6 +228,8 @@ def status():
         # HUD Data
         'account_balance': account_balance,
         'daily_pnl': daily_pnl,
+        'daily_target_progress': state.state_manager.get_daily_target_progress(),
+        'daily_discipline_xp': getattr(state.state_manager, 'daily_discipline_xp', 0),
         'market_session': market_session,
         # Master Switch & Log
         'master_trading_mode': master_mode,
@@ -239,7 +242,9 @@ def status():
         'correlation_score': correlation_score,
         'pnl_labels': pnl_labels,
         'pnl_history': pnl_history,
-        'latest_telemetry': getattr(state.state_manager, 'latest_telemetry', None)
+        'latest_telemetry': getattr(state.state_manager, 'latest_telemetry', None),
+        'market_environment_status': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN'),
+        'recent_badges': getattr(state.state_manager, 'recent_badges', [])
     }
     
     if core.engine.engine_thread and core.engine.engine_thread.is_alive():
@@ -441,7 +446,8 @@ def approve_signal(signal_id):
                     'timestamp': time.time(), 
                     # Keep the original ID for the CSV Logger
                     'signal_timestamp': float(signal_to_execute['timestamp']),
-                    'signal_id': signal_to_execute.get('id', '')
+                    'signal_id': signal_to_execute.get('id', ''),
+                    'entry_environment': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN')
                 }
                 state.state_manager.add_position(position)
 
@@ -468,7 +474,8 @@ def approve_signal(signal_id):
                     'timestamp': time.time(), 
                     # Keep the original ID for the CSV Logger
                     'signal_timestamp': float(signal_to_execute['timestamp']),
-                    'signal_id': signal_to_execute.get('id', '')
+                    'signal_id': signal_to_execute.get('id', ''),
+                    'entry_environment': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN')
                 }
                 state.state_manager.add_position(position)
 
@@ -584,11 +591,59 @@ def get_equity():
         print(f"Error fetching equity data: {e}")
         return jsonify([])
 
-@app.route('/logout')
+
+@app.route('/api/leaderboard')
 @login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
+def get_leaderboard():
+    try:
+        import pandas as pd
+        import os
+        
+        csv_path = 'trade_history.csv'
+        
+        # 1. Guard against missing or empty file
+        if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
+            return jsonify({"daily_crown": 0.0, "weekly_high_score": 0.0, "whale_catch": 0.0, "iron_streak": 0})
+
+        # 2. Read CSV explicitly WITHOUT headers
+        df = pd.read_csv(csv_path, header=None)
+
+        # 3. Map to specific indexes (13 = PnL, 14 = Outcome)
+        pnl_col = 13
+        outcome_col = 14
+
+        # Safety check
+        if len(df.columns) <= outcome_col:
+            return jsonify({"daily_crown": 0.0, "weekly_high_score": 0.0, "whale_catch": 0.0, "iron_streak": 0})
+
+        # Force PnL column to numbers
+        df[pnl_col] = pd.to_numeric(df[pnl_col], errors='coerce').fillna(0)
+
+        # 4. Calculate Scores safely
+        whale_catch = float(df[pnl_col].max()) if not df.empty else 0.0
+        daily_crown = float(df[pnl_col].sum())
+        weekly_score = float(df[pnl_col].sum())
+
+        # 5. Calculate Iron Streak
+        current_streak = 0
+        max_streak = 0
+        for outcome in df[outcome_col].dropna():
+            if str(outcome).upper() == 'WIN':
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        return jsonify({
+            "daily_crown": daily_crown,
+            "weekly_high_score": weekly_score,
+            "whale_catch": whale_catch,
+            "iron_streak": max_streak
+        })
+
+    except Exception as e:
+        print(f"Leaderboard Engine Crash: {e}")
+        return jsonify({"daily_crown": 0.0, "weekly_high_score": 0.0, "whale_catch": 0.0, "iron_streak": 0})
 
 def evolution_loop():
     """Background task to retrain the RL agent on real trade data every 24 hours."""

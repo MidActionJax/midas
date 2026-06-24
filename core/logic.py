@@ -197,6 +197,17 @@ def get_market_session():
         print(f"Error getting market session: {e}")
         return "Unknown"
 
+def get_market_environment_status(chop_index, current_atr):
+    """
+    Evaluates the market environment based on Choppiness Index and ATR.
+    """
+    if chop_index > 55.0 and current_atr < 1.5:
+        return 'ZONE RED'
+    elif chop_index < 45.0 and current_atr >= 2.0:
+        return 'ZONE GREEN'
+    else:
+        return 'ZONE YELLOW'
+
 def get_dynamic_thresholds():
     """
     Dynamic Session Profiler: Returns the minimum ML confidence required 
@@ -800,7 +811,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
             # --- AI SNIPER TRIGGER ---
             # Set optimized thresholds from Grid Search
-            target_threshold = 80.0 if active_brain == 'LONG' else 80.0
+            target_threshold = 72.0 if active_brain == 'LONG' else 80.0
             
             # If the AI is confident, it creates its own signal even if no iceberg exists!
             if ml_score_pct >= target_threshold:
@@ -1172,16 +1183,16 @@ def analyze_stagnation_exit(symbol, current_price, position_data):
     
     chop = getattr(state_manager, 'current_chop_index', 50.0)
     if chop < 45.0:
-        base_heartbeats = 150
+        base_heartbeats = 300
     elif chop > 55.0:
-        base_heartbeats = 50
+        base_heartbeats = 150
     else:
-        base_heartbeats = 75
+        base_heartbeats = 200
     
     # Adjust inversely proportional to ATR.
     safe_atr = max(atr, 0.5) # Prevent division by zero
     dynamic_threshold = int(base_heartbeats * (2.0 / safe_atr))
-    dynamic_threshold = max(25, min(dynamic_threshold, 150)) # Clamp bounds between 25 and 150
+    dynamic_threshold = max(60, min(dynamic_threshold, 300)) # Clamp bounds between 25 and 150
     
     if elapsed_seconds >= dynamic_threshold:
         # Suppress constant printing by letting engine.py log it on execution

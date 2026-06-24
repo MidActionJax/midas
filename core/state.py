@@ -33,6 +33,7 @@ class StateManager:
         # New account state fields
         self.account_balance = 0.0
         self.daily_pnl = 0.0
+        self.daily_discipline_xp = 0
         self.last_sync_time = None
         self.master_trading_mode = 'PAPER' # New master switch
         self.sizing_mode = 'FIXED' # New sizing mode
@@ -44,7 +45,7 @@ class StateManager:
         self.auto_buy_enabled = False
         self.last_trade_time = 0
         self.current_chop_index = 50.0
-        self.MAX_DAILY_LOSS = -250.00
+        self.MAX_DAILY_LOSS = -500.00
         self.circuit_breaker_tripped = False
         self.current_market_time = None
         self.session_cvd = 0.0
@@ -74,6 +75,7 @@ class StateManager:
         self.manual_command_queue = []
         self.hold_override_active = False
         self.diamond_hands_active = False
+        self.recent_badges = []
         self.load_price_history()
 
     def toggle_dev_mode(self):
@@ -257,6 +259,7 @@ class StateManager:
         self.reset_cvd()
         with self._lock:
             self.daily_pnl = 0.0
+            self.daily_discipline_xp = 0
             self.live_wins = 0
             self.live_trades = 0
             self.circuit_breaker_tripped = False
@@ -366,6 +369,20 @@ class StateManager:
             self.log_rolling_buffer.append(log_entry)
             for signal_id in self.active_trade_logs:
                 self.active_trade_logs[signal_id].append(log_entry)
+
+    def get_daily_target_progress(self):
+        """
+        Calculates the current daily PnL as a percentage of the config's DAILY_POINT_TARGET.
+        Assumes MES multiplier ($5 per point).
+        """
+        import config
+        point_target = getattr(config, 'DAILY_POINT_TARGET', 6.0)
+        target_in_dollars = point_target * 5.0  # MES contract multiplier
+        
+        if target_in_dollars <= 0:
+            return 0.0
+            
+        return (self.daily_pnl / target_in_dollars) * 100
 
 # Instantiate the global state manager
 state_manager = StateManager()

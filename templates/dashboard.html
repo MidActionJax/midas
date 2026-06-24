@@ -124,9 +124,186 @@
         }
         .diamond-off { background-color: #1a1a1a; color: #666; border: 1px solid #333; transition: all 0.3s ease; }
         .diamond-on { background-color: #002244; color: #00f3ff; border: 1px solid #00f3ff; box-shadow: 0 0 10px #00f3ff, inset 0 0 10px #00f3ff; text-shadow: 0 0 5px #00f3ff; font-weight: bold; transition: all 0.3s ease; }
+        
+        /* --- THREAT RADAR --- */
+        @keyframes pulse-red {
+            0% { box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 10px rgba(255, 0, 68, 0.2); }
+            50% { box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 30px rgba(255, 0, 68, 0.8); }
+            100% { box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 10px rgba(255, 0, 68, 0.2); }
+        }
+        @keyframes radar-scan {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .radar-icon-spin {
+            animation: radar-scan 2s linear infinite;
+        }
+        @keyframes pulse-alert {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .pulse-alert-icon {
+            animation: pulse-alert 1s infinite ease-in-out;
+        }
+
+        /* --- FULL PAGE VIGNETTE --- */
+        .vignette-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+            transition: all 1s ease-in-out;
+        }
+        .page-glow-red { animation: pulse-vignette-red 2s infinite ease-in-out; }
+        .page-glow-yellow { animation: pulse-vignette-yellow 3s infinite ease-in-out; }
+        .page-glow-green { animation: pulse-vignette-green 4s infinite ease-in-out; }
+        
+        @keyframes pulse-vignette-red {
+            0%, 100% { box-shadow: inset 0 0 50px rgba(255, 0, 68, 0.15); }
+            50% { box-shadow: inset 0 0 150px rgba(255, 0, 68, 0.4); }
+        }
+        @keyframes pulse-vignette-yellow {
+            0%, 100% { box-shadow: inset 0 0 40px rgba(255, 193, 7, 0.1); }
+            50% { box-shadow: inset 0 0 100px rgba(255, 193, 7, 0.25); }
+        }
+        @keyframes pulse-vignette-green {
+            0%, 100% { box-shadow: inset 0 0 40px rgba(0, 255, 0, 0.1); }
+            50% { box-shadow: inset 0 0 100px rgba(0, 255, 0, 0.2); }
+        }
+
+        /* --- TILT MODE --- */
+        body.tilt-mode { background-color: #1a0505 !important; transition: background-color 0.8s ease; }
+        body.tilt-mode .card, body.tilt-mode .glass-panel, body.tilt-mode .glass-box-panel, body.tilt-mode .table-dark { background-color: #2a0505 !important; border-color: #ff0044 !important; box-shadow: 0 0 15px rgba(255, 0, 68, 0.15); }
+        body.tilt-mode h1, body.tilt-mode h2, body.tilt-mode h4, body.tilt-mode h5, body.tilt-mode .text-warning, body.tilt-mode .text-success { color: #ff3366 !important; text-shadow: 0 0 10px rgba(255, 0, 68, 0.4); }
+        body.tilt-mode #primary-hud { border-color: #ff0044 !important; box-shadow: 0 0 30px rgba(255, 0, 68, 0.3) !important; }
+        @keyframes tilt-pulse { 0% { box-shadow: inset 0 0 10px #000; } 50% { box-shadow: inset 0 0 30px #ff0044; } 100% { box-shadow: inset 0 0 10px #000; } }
+        .tilt-bar { background-color: #ff0044 !important; animation: tilt-pulse 2s infinite; }
+
+        /* --- HOUSE MONEY MODE --- */
+        /* --- CASINO GOLD MASTER THEME --- */
+        body.casino-gold-mode {
+            background-color: #0f0a00 !important;
+            transition: background-color 0.8s ease;
+        }
+        body.casino-gold-mode .card, 
+        body.casino-gold-mode .glass-panel, 
+        body.casino-gold-mode .glass-box-panel,
+        body.casino-gold-mode .table-dark {
+            background-color: #1a1500 !important;
+            border-color: #FFD700 !important;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.1);
+        }
+        body.casino-gold-mode h1, 
+        body.casino-gold-mode h2, 
+        body.casino-gold-mode h4, 
+        body.casino-gold-mode h5,
+        body.casino-gold-mode .text-light,
+        body.casino-gold-mode .text-warning {
+            color: #FFD700 !important;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.4);
+        }
+        body.casino-gold-mode #primary-hud {
+            border-color: #FFD700 !important;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.2) !important;
+        }
+        .overdrive-mode {
+            background-color: #FFD700 !important;
+            box-shadow: 0 0 10px #FFD700, 0 0 20px #FFD700;
+        }
+        .overdrive-text {
+            color: #FFD700 !important;
+            text-shadow: 0 0 10px #FFD700;
+            font-weight: bold;
+        }
+        
+        /* --- OVERDRIVE FIRE ANIMATION --- */
+        @keyframes fire-flicker {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 100% 100%; }
+        }
+        .overdrive-mode {
+            background: linear-gradient(90deg, #FFD700, #ff8c00, #FFD700, #ff8c00);
+            background-size: 300% 100%;
+            animation: fire-flicker 1.5s infinite linear;
+            box-shadow: 0 0 15px #FFD700, 0 0 25px #ff8c00 !important;
+            border: 1px solid #fff !important;
+        }
+
+        /* --- XP BAR LEVEL UP FLASH --- */
+        @keyframes level-up-flash {
+            0% { transform: scale(1); box-shadow: 0 0 0px rgba(0, 255, 204, 0); }
+            50% { transform: scale(1.05); box-shadow: 0 0 20px rgba(0, 255, 204, 1); }
+            100% { transform: scale(1); box-shadow: 0 0 0px rgba(0, 255, 204, 0); }
+        }
+        .level-up-active {
+            animation: level-up-flash 0.5s ease-out;
+        }
+
+        /* --- ACHIEVEMENT BADGES --- */
+        .achievement-badge {
+            border: 2px solid #333;
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+            background: #111;
+            transition: all 0.3s ease;
+            width: 120px;
+        }
+        .achievement-badge.locked {
+            filter: grayscale(100%) opacity(0.5);
+        }
+
+        /* --- LEADERBOARD --- */
+        .leaderboard-card {
+            background: linear-gradient(145deg, #111 0%, #222 100%);
+            border: 1px solid #FFD700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.2);
+        }
+        .leaderboard-title {
+            color: #FFD700;
+            text-shadow: 0 0 5px rgba(255, 215, 0, 0.5);
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+        .leaderboard-value {
+            color: #00ffcc;
+            text-shadow: 0 0 5px rgba(0, 255, 204, 0.4);
+        }
+        .achievement-badge.unlocked {
+            filter: none;
+        }
+        #badge-sniper.unlocked {
+            border-color: #00ff00;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.4), inset 0 0 10px rgba(0, 255, 0, 0.2);
+            color: #00ff00;
+        }
+        #badge-diamond.unlocked {
+            border-color: #00f3ff;
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.4), inset 0 0 10px rgba(0, 243, 255, 0.2);
+            color: #00f3ff;
+        }
+        #badge-iron.unlocked {
+            border-color: #C0C0C0;
+            box-shadow: 0 0 15px rgba(192, 192, 192, 0.4), inset 0 0 10px rgba(192, 192, 192, 0.2);
+            color: #C0C0C0;
+        }
     </style>
 </head>
 <body>
+    <div class="toast-container position-fixed top-0 end-0 p-4" style="z-index: 9999;">
+        <div id="signalToast" class="toast bg-dark" style="border: 2px solid #ffc107; box-shadow: 0 0 20px rgba(255, 193, 7, 0.4);" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-dark text-warning" style="border-bottom: 1px solid #444;">
+                <strong class="me-auto" style="letter-spacing: 1px;">🚨 NEW SIGNAL DETECTED</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body text-light fs-5 text-center" id="toast-body-content">Awaiting data...</div>
+        </div>
+    </div>
+    <div id="vignette-overlay" class="vignette-overlay"></div>
     <div class="container mt-5">
         <div id="kill-switch-alert" class="alert alert-danger text-center" role="alert" style="display: none;">
             <strong>CRITICAL: DAILY DRAWDOWN LIMIT REACHED. TRADING SUSPENDED.</strong>
@@ -138,28 +315,45 @@
         <h4 class="text-center text-muted" style="letter-spacing: 2px; color: text-shadow; 0 0 5px rgba(0,255,65,0.3)">Apex Predator Algorithmic Engine</h4>
 
         <!-- HUD Row -->
+        <div id="primary-hud" class="container-fluid mb-4 p-4 rounded" style="border: 2px solid #333; background: #050505; transition: all 0.5s ease;">
+            <div class="row align-items-center text-center">
+                <div class="col-md-6 border-end border-secondary">
+                    <h2 class="text-warning mb-2" style="letter-spacing: 2px;">DAILY PnL</h2>
+                    <p id="hud-pnl" class="display-1 fw-bold text-light mb-0" style="text-shadow: 0 0 20px rgba(0,255,100,0.2);">$0.00</p>
+                </div>
+                <div class="col-md-6 px-4">
+                    <h4 id="house-money-text" class="text-muted mb-3 fw-bold" style="letter-spacing: 1px;">Daily Target: 0%</h4>
+                    <div class="progress bg-dark" style="height: 35px; border: 2px solid #444; border-radius: 8px; box-shadow: inset 0 0 10px #000;">
+                        <div id="house-money-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%; background-color: #00ffcc; transition: width 0.5s ease, background-color 0.5s ease;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row text-center mb-4">
-            <div class="col-md-4">
-                <div class="card text-white bg-dark border-secondary h-100">
+            <div class="col-md-6">
+                <div class="card text-white bg-dark border-secondary h-100 p-3">
                     <div class="card-body">
                         <h5 class="card-title text-warning">Account Balance</h5>
-                        <p id="hud-balance" class="card-text fs-3">$0.00</p>
+                        <p id="hud-balance" class="display-5 fw-bold mb-0">$0.00</p>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="card text-white bg-dark border-secondary h-100">
-                    <div class="card-body">
-                        <h5 class="card-title text-warning">Daily PnL</h5>
-                        <p id="hud-pnl" class="card-text fs-3">$0.00</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card text-white bg-dark border-secondary h-100">
+            <div class="col-md-6">
+                <div class="card text-white bg-dark border-secondary h-100 p-3">
                     <div class="card-body">
                         <h5 class="card-title text-warning">Market Session</h5>
                         <p class="card-text fs-3"><span id="session-phase-badge" class="badge bg-secondary">--</span></p>
+                        
+                        <div class="mt-4">
+                            <div class="d-flex justify-content-between text-muted" style="font-size: 0.85em; font-weight: bold;">
+                                <span style="letter-spacing: 1px;">🎮 DISCIPLINE XP</span>
+                                <span id="discipline-xp-text" class="text-info">0 XP</span>
+                            </div>
+                            <div class="progress bg-dark mt-1" style="height: 15px; border: 1px solid rgba(255,255,255,0.1); box-shadow: inset 0 0 5px rgba(0,0,0,0.5);">
+                                <div id="discipline-xp-bar" class="progress-bar bg-info progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%; transition: width 0.5s ease-out, background-color 0.5s ease;"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -240,6 +434,15 @@
             
             <!-- TELEMETRY GLASS BOX PANEL -->
             <div class="col-lg-4 d-flex flex-column gap-3">
+                <!-- THREAT RADAR -->
+                <div class="glass-box-panel" id="threat-radar-card" style="transition: all 0.3s ease;">
+                    <div class="glass-box-header text-center">&gt; THREAT RADAR_</div>
+                    <div class="d-flex justify-content-center align-items-center mt-3" style="min-height: 60px;">
+                        <div id="threat-radar-icon" class="me-3" style="font-size: 2em; display: none;"></div>
+                        <div id="threat-radar-text" class="fw-bold fs-6 text-center" style="letter-spacing: 1px;">AWAITING DATA...</div>
+                    </div>
+                </div>
+
                 <div class="glass-box-panel" id="market-pulse-card">
                     <div class="glass-box-header text-center">&gt; MARKET PULSE_</div>
                     <div class="d-flex justify-content-around mt-2">
@@ -296,6 +499,46 @@
                     <div class="col">
                         <h4 class="text-danger">Avg. Loser</h4>
                         <p id="avg-loss" class="fs-3">$0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LEADERBOARD SECTION -->
+        <div class="card leaderboard-card mb-4">
+            <div class="card-header text-center leaderboard-title">🏆 HALL OF FAME & ACHIEVEMENTS 🏆</div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <h5 class="text-light">🏆 The Daily Crown</h5>
+                        <p id="lb-daily-crown" class="fs-3 fw-bold leaderboard-value" style="color: #FFD700; text-shadow: 0 0 10px rgba(255,215,0,0.5);">$0.00</p>
+                    </div>
+                    <div class="col-md-3">
+                        <h5 class="text-light">🥈 Weekly High Score</h5>
+                        <p id="lb-weekly-score" class="fs-3 fw-bold leaderboard-value" style="color: #C0C0C0; text-shadow: 0 0 10px rgba(192,192,192,0.5);">$0.00</p>
+                    </div>
+                    <div class="col-md-3">
+                        <div style="border: 1px solid #00f3ff; border-radius: 8px; padding: 5px; background: rgba(0,243,255,0.05); box-shadow: inset 0 0 10px rgba(0,243,255,0.1);">
+                            <h5 class="text-light m-0">🐋 The Whale Catch</h5>
+                            <p id="lb-whale-catch" class="fs-3 fw-bold leaderboard-value m-0" style="color: #00f3ff; text-shadow: 0 0 10px rgba(0,243,255,0.5);">$0.00</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <h5 class="text-light">🔥 The Iron Streak</h5>
+                        <p id="lb-iron-streak" class="fs-3 fw-bold text-danger" style="text-shadow: 0 0 10px rgba(255,0,0,0.5);">0 WINS</p>
+                    </div>
+                </div>
+                <hr style="border-color: #FFD700; opacity: 0.3;">
+                <h5 class="text-center text-light mb-3">Achievement Badges</h5>
+                <div id="achievement-grid" class="d-flex justify-content-center gap-3 mt-3">
+                    <div id="badge-sniper" class="achievement-badge locked">
+                        <span class="fs-2">🎯</span><br><small class="fw-bold">The Sniper</small>
+                    </div>
+                    <div id="badge-diamond" class="achievement-badge locked">
+                        <span class="fs-2">💎</span><br><small class="fw-bold">Diamond Hands</small>
+                    </div>
+                    <div id="badge-iron" class="achievement-badge locked">
+                        <span class="fs-2">🛡️</span><br><small class="fw-bold">Iron Shield</small>
                     </div>
                 </div>
             </div>
@@ -403,6 +646,7 @@
         let knownSignals = new Set();
         let lastPendingCount = 0;
         window.audioEnabled = false;
+        let lastDisciplineXp = 0;
 
         function playMidasPing() {
             if (!window.audioEnabled) return;
@@ -610,9 +854,49 @@
                     const dailyPnl = parseFloat(data.daily_pnl);
                     hudPnl.textContent = formatCurrency(dailyPnl);
 
-                    if (dailyPnl > 0) hudPnl.className = 'card-text fs-3 text-success';
-                    else if (dailyPnl < 0) hudPnl.className = 'card-text fs-3 text-danger';
-                    else hudPnl.className = 'card-text fs-3 text-light';
+                    if (dailyPnl > 0) hudPnl.className = 'display-1 fw-bold text-success';
+                    else if (dailyPnl < 0) hudPnl.className = 'display-1 fw-bold text-danger';
+                    else hudPnl.className = 'display-1 fw-bold text-light';
+
+                    // House Money Mode / Daily Target
+                    // Fallback to front-end calculation ($30 target for MES) if backend isn't sending it yet
+                    const targetProgress = data.daily_target_progress !== undefined ? data.daily_target_progress : (dailyPnl / 30.0) * 100;
+                    const houseMoneyBar = document.getElementById('house-money-bar');
+                    const houseMoneyText = document.getElementById('house-money-text');
+                    
+                    if (houseMoneyBar && houseMoneyText) {
+                        const clampedProgress = Math.min(100, Math.max(0, Math.abs(targetProgress))); 
+                        if (targetProgress <= -100) {
+                            document.body.classList.remove('casino-gold-mode');
+                            document.body.classList.add('tilt-mode');
+                            houseMoneyBar.style.width = '100%';
+                            houseMoneyBar.className = 'progress-bar progress-bar-striped progress-bar-animated tilt-bar';
+                            houseMoneyText.textContent = '🛑 LET IT GO. COME BACK TOMORROW. 🛑';
+                            houseMoneyText.className = 'text-danger fw-bold fs-4 mt-2';
+                            houseMoneyText.style.textShadow = '0 0 10px rgba(255,0,68,0.8)';
+                        } else if (targetProgress >= 100) {
+                            document.body.classList.remove('tilt-mode');
+                            document.body.classList.add('casino-gold-mode');
+                            houseMoneyBar.style.width = '100%';
+                            houseMoneyBar.className = 'progress-bar progress-bar-striped progress-bar-animated overdrive-mode';
+                            houseMoneyText.textContent = '🎰 HOUSE MONEY MODE ACTIVE 🎰';
+                            houseMoneyText.className = 'overdrive-text fs-4 mt-2';
+                            houseMoneyText.style.textShadow = ''; 
+                        } else {
+                            document.body.classList.remove('casino-gold-mode', 'tilt-mode');
+                            houseMoneyBar.style.width = clampedProgress + '%';
+                            houseMoneyBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+                            if (targetProgress < 0) {
+                                houseMoneyBar.style.backgroundColor = '#ff3366'; 
+                                houseMoneyText.textContent = `Daily Target: ${targetProgress.toFixed(1)}% (Drawdown)`;
+                            } else {
+                                houseMoneyBar.style.backgroundColor = '#00ffcc'; 
+                                houseMoneyText.textContent = `Daily Target: ${targetProgress.toFixed(1)}%`;
+                            }
+                            houseMoneyText.className = 'text-muted fw-bold mb-3';
+                            houseMoneyText.style.textShadow = '';
+                        }
+                    }
 
                     const sessionBadge = document.getElementById('session-phase-badge');
                     if (sessionBadge) {
@@ -631,6 +915,42 @@
                         }
                     }
                     
+                    // Gamified Discipline XP
+                    const xpText = document.getElementById('discipline-xp-text');
+                    const xpBar = document.getElementById('discipline-xp-bar');
+                    if (xpText && xpBar) {
+                        const currentXp = data.daily_discipline_xp || 0;
+                        xpText.textContent = `${currentXp} XP`;
+                        
+                        let targetMax = 200; // visual cap
+                        let xpPercent = Math.min(100, Math.max(0, (currentXp / targetMax) * 100));
+                        
+                        if (currentXp < 0) {
+                            xpBar.style.width = '100%';
+                            xpBar.className = 'progress-bar bg-danger progress-bar-striped progress-bar-animated';
+                            xpText.className = 'text-danger fw-bold';
+                        } else if (currentXp >= targetMax) {
+                            xpBar.style.width = '100%';
+                            xpBar.className = 'progress-bar bg-success progress-bar-striped progress-bar-animated overdrive-mode';
+                            xpText.className = 'text-success fw-bold';
+                        } else if (currentXp >= 100) {
+                            xpBar.style.width = xpPercent + '%';
+                            xpBar.className = 'progress-bar bg-success progress-bar-striped progress-bar-animated';
+                            xpText.className = 'text-success fw-bold';
+                        } else {
+                            xpBar.style.width = xpPercent + '%';
+                            xpBar.className = 'progress-bar bg-info progress-bar-striped progress-bar-animated';
+                            xpText.className = 'text-info fw-bold';
+                        }
+
+                        // Check for Level Up
+                        if (Math.floor(currentXp / 100) > Math.floor(lastDisciplineXp / 100) && currentXp > 0) {
+                            xpBar.parentElement.classList.add('level-up-active');
+                            setTimeout(() => xpBar.parentElement.classList.remove('level-up-active'), 500);
+                        }
+                        lastDisciplineXp = currentXp;
+                    }
+
                     const realizedPnl = parseFloat(data.realized_pnl);
                     pnlEl.textContent = formatCurrency(realizedPnl);
                     if (realizedPnl > 0) pnlEl.className = 'text-success';
@@ -819,9 +1139,49 @@
 
                         if (newSignalDetected) {
                             playMidasPing();
+                            const latestSignal = data.pending_signals[data.pending_signals.length - 1];
+                            const toastContent = document.getElementById('toast-body-content');
+                            const colorClass = latestSignal.type === 'BUY_SIGNAL' ? 'text-success' : 'text-danger';
+                            const actionText = latestSignal.type === 'BUY_SIGNAL' ? 'LONG' : 'SHORT';
+                            toastContent.innerHTML = `<span class="${colorClass} fw-bold">${actionText}</span> @ ${latestSignal.price}`;
+                            const toastEl = document.getElementById('signalToast');
+                            const toast = new bootstrap.Toast(toastEl, { delay: 8000 }); 
+                            toast.show();
                         }
                     } else {
                         queueDiv.style.display = 'none';
+                    }
+
+                    // Achievements
+                    if (data.recent_badges) {
+                        const earnedBadgeNames = data.recent_badges.map(b => b.badge);
+                        const badgeSniper = document.getElementById('badge-sniper');
+                        const badgeDiamond = document.getElementById('badge-diamond');
+                        const badgeIron = document.getElementById('badge-iron');
+                        
+                        if (badgeSniper) {
+                            if (earnedBadgeNames.includes('The Sniper')) {
+                                badgeSniper.classList.replace('locked', 'unlocked');
+                            } else {
+                                badgeSniper.classList.replace('unlocked', 'locked');
+                            }
+                        }
+                        
+                        if (badgeDiamond) {
+                            if (earnedBadgeNames.includes('Diamond Hands')) {
+                                badgeDiamond.classList.replace('locked', 'unlocked');
+                            } else {
+                                badgeDiamond.classList.replace('unlocked', 'locked');
+                            }
+                        }
+                        
+                        if (badgeIron) {
+                            if (earnedBadgeNames.includes('Iron Shield')) {
+                                badgeIron.classList.replace('locked', 'unlocked');
+                            } else {
+                                badgeIron.classList.replace('unlocked', 'locked');
+                            }
+                        }
                     }
 
                     // 5. Execution Log
@@ -962,6 +1322,51 @@
                             pulseMomentum.textContent = 'UNKNOWN';
                         }
                     }
+                    
+                    // 8. Threat Radar
+                    if (data.market_environment_status) {
+                        const threatCard = document.getElementById('threat-radar-card');
+                        const threatIcon = document.getElementById('threat-radar-icon');
+                        const threatText = document.getElementById('threat-radar-text');
+                        const vignette = document.getElementById('vignette-overlay');
+
+                        vignette.classList.remove('page-glow-red', 'page-glow-yellow', 'page-glow-green');
+
+                        if (data.market_environment_status === 'ZONE RED') {
+                            vignette.classList.add('page-glow-red');
+                            threatCard.style.borderColor = '#ff0044';
+                            threatCard.style.animation = 'pulse-red 1.5s infinite';
+                            threatIcon.innerHTML = '🚨';
+                            threatIcon.className = 'me-3 pulse-alert-icon';
+                            threatIcon.style.display = 'block';
+                            threatText.textContent = 'HOSTILE STRUCTURE - HIGH FRICTION CHOP';
+                            threatText.style.color = '#ff0044';
+                            threatText.style.textShadow = '0 0 8px rgba(255, 0, 68, 0.6)';
+                        } else if (data.market_environment_status === 'ZONE GREEN') {
+                            vignette.classList.add('page-glow-green');
+                            threatCard.style.borderColor = '#00ff00';
+                            threatCard.style.animation = 'none';
+                            threatCard.style.boxShadow = 'inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 20px rgba(0, 255, 0, 0.4)';
+                            threatIcon.innerHTML = '📡';
+                            threatIcon.className = 'me-3 radar-icon-spin';
+                            threatIcon.style.display = 'block';
+                            threatText.textContent = 'ESCAPE VELOCITY - OPTIMAL MOMENTUM';
+                            threatText.style.color = '#00ff00';
+                            threatText.style.textShadow = '0 0 8px rgba(0, 255, 0, 0.6)';
+                        } else {
+                            // ZONE YELLOW or UNKNOWN
+                            vignette.classList.add('page-glow-yellow');
+                            threatCard.style.borderColor = '#ffc107';
+                            threatCard.style.animation = 'none';
+                            threatCard.style.boxShadow = 'inset 0 0 15px rgba(0, 0, 0, 0.9), 0 0 15px rgba(255, 193, 7, 0.3)';
+                            threatIcon.innerHTML = '⚠️';
+                            threatIcon.className = 'me-3';
+                            threatIcon.style.display = 'block';
+                            threatText.textContent = 'TRANSITIONAL ENVIRONMENT - CAUTION';
+                            threatText.style.color = '#ffc107';
+                            threatText.style.textShadow = '0 0 8px rgba(255, 193, 7, 0.6)';
+                        }
+                    }
                 })
                 .catch(e => {
                     console.error(e);
@@ -1081,6 +1486,20 @@
             })
             .catch(err => console.error("Error sending manual override:", err));
         }
+
+        function updateLeaderboard() {
+            fetch('/api/leaderboard')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('lb-daily-crown').textContent = '$' + data.daily_crown.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    document.getElementById('lb-weekly-score').textContent = '$' + data.weekly_high_score.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    document.getElementById('lb-whale-catch').textContent = '$' + data.whale_catch.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    document.getElementById('lb-iron-streak').textContent = data.iron_streak + ' WINS';
+                })
+                .catch(e => console.error("Error fetching leaderboard:", e));
+        }
+        setInterval(updateLeaderboard, 5000);
+        document.addEventListener('DOMContentLoaded', updateLeaderboard);
 
         document.getElementById('btn-override-buy').addEventListener('click', () => sendManualOverride('BUY'));
         document.getElementById('btn-override-sell').addEventListener('click', () => sendManualOverride('SHORT'));

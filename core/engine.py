@@ -234,27 +234,41 @@ class MidasEngine(threading.Thread):
                     
                     current_price = self.adapter.get_current_price(pos_symbol)
                     entry_price = pos.get('entry_price')
-                    
+
                     if current_price and entry_price:
                         is_long = pos_type == 'LONG'
                         
+                        # --- CALCULATE TRUE AVERAGE ENTRY ACROSS ALL BULLETS ---
+                        total_size = 0
+                        total_value = 0
+                        for p in tracked_positions:
+                            if p.get('symbol') == pos_symbol and not p.get('exit_triggered'):
+                                p_type = 'LONG' if 'BUY' in p.get('type', 'BUY').upper() else 'SHORT'
+                                if p_type == pos_type:
+                                    sz = p.get('size', 1)
+                                    total_size += sz
+                                    total_value += p.get('entry_price', entry_price) * sz
+                                    
+                        avg_entry = total_value / total_size if total_size > 0 else entry_price
+                        
                         # --- TIGHTER MICRO-PROFIT PROTECTORS ---
-                        points_profit = (current_price - entry_price) if is_long else (entry_price - current_price)
+                        points_profit = (current_price - avg_entry) if is_long else (avg_entry - current_price)
                         
                         # Estimate unrealized PnL manually for the logger 
+                        # Estimate PnL and deduct Reality Tax ($1.90 Comm + $2.50 Execution Slippage)
                         multiplier = 5.0 if pos_symbol == 'MES' else 2.0
-                        pos['unrealized_pnl'] = points_profit * multiplier * pos.get('size', 1)
+                        raw_pnl = points_profit * multiplier * pos.get('size', 1)
+                        reality_tax = 4.40 * pos.get('size', 1)
+                        pos['unrealized_pnl'] = raw_pnl - reality_tax
                         pos['max_profit'] = max(pos.get('max_profit', points_profit), points_profit)
+                        pos['max_drawdown'] = min(pos.get('max_drawdown', points_profit), points_profit)
                         
                         # Calculate ATR continuously for dynamic trailing
                         price_hist = state.state_manager.price_history.get(pos_symbol, [])
                         current_atr = logic.get_current_atr(price_hist) if price_hist else 2.0
 
                         if 'dynamic_sl' not in pos:
-                            if state.state_manager.is_concrete_wet:
-                                pos['dynamic_sl'] = max(-6.0, - (1.5 * current_atr))
-                            else:
-                                pos['dynamic_sl'] = -2.0
+                            pos['dynamic_sl'] = -6.0
                             
                         # --- DIAGNOSTIC HEARTBEAT LOG ---
                         current_time = time.time()
@@ -262,22 +276,27 @@ class MidasEngine(threading.Thread):
                             log_to_both(f"💓 [HEARTBEAT] {pos_symbol} {pos_type} | Profit: {points_profit:.2f} pts | SL: {pos.get('dynamic_sl', -1.0):.2f}")
                             pos['last_pnl_log_time'] = current_time
 
-                        # --- TASK 2: TIERED RATCHET (GEARS) ---
-                        if pos['max_profit'] > 5.0 * current_atr:
-                            new_sl = pos['max_profit'] - (3.0 * current_atr)
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- GEAR 3 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] > 3.0 * current_atr:
-                            new_sl = pos['max_profit'] - (1.5 * current_atr)
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- GEAR 2 RATCHET: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
-                        elif pos['max_profit'] > 1.0 * current_atr:
-                            new_sl = 0.25
-                            if new_sl > pos['dynamic_sl']:
-                                pos['dynamic_sl'] = new_sl
-                                log_to_both(f"--- GEAR 1 AUTO-BREAKEVEN: {pos_symbol} SL moved to +{new_sl:.2f} (ATR: {current_atr:.2f}) ---")
+                        # --- TASK 2: TIERED RATCHET (IMPROVED SNIPER GEARS) ---
+                        calculated_sl = pos['dynamic_sl'] # Start with current SL
+                        
+                        # Calculate Gear 2 (Breakeven)
+                        if pos['max_profit'] >= 3.5:
+                            calculated_sl = max(calculated_sl, 0.50)
+                            
+                        # Calculate Gear 3 (The Runner)
+                        if pos['max_profit'] >= 4.0:
+                            # Trail by 1.25x the current volatility. If ATR is 3.12, trail is ~3.9 pts.
+                            dynamic_trail = max(2.50, 1.25 * current_atr) 
+                            runner_sl = max(pos['max_profit'] - dynamic_trail, 1.00)
+                            calculated_sl = max(calculated_sl, runner_sl)
+                            
+                        # Apply the highest possible protection
+                        if calculated_sl > pos['dynamic_sl']:
+                            if calculated_sl >= 1.00:
+                                log_to_both(f"--- GEAR 3 PROFIT LOCK: {pos_symbol} SL moved to +{calculated_sl:.2f} ---")
+                            elif calculated_sl == 0.50:
+                                log_to_both(f"--- GEAR 2 AUTO-BREAKEVEN: {pos_symbol} SL moved to +{calculated_sl:.2f} ---")
+                            pos['dynamic_sl'] = calculated_sl
                                  
                         # Remove the hard ceiling
                         hit_tp = False 
@@ -315,7 +334,7 @@ class MidasEngine(threading.Thread):
                         
                         # --- STAGNATION TIGHTENER ---
                         if time_open > 120 and not riding_trend:
-                            new_sl = pos['max_profit'] - 1.5
+                            new_sl = pos['max_profit'] - 2.75
                             if new_sl > pos['dynamic_sl']:
                                 pos['dynamic_sl'] = new_sl
                                 log_to_both(f"--- STAGNATION TIGHTENER: {pos_symbol} SL moved to {new_sl:.2f} ---")
@@ -329,7 +348,7 @@ class MidasEngine(threading.Thread):
                         # --- THE DIAMOND HANDS OVERRIDE ---
                         if getattr(state.state_manager, 'diamond_hands_active', False):
                             hit_tp = False
-                            hit_sl = False
+                            hit_sl = points_profit <= -10.0
                             hit_time_kill = False
                             stagnation_signal = None
                             
@@ -427,6 +446,44 @@ class MidasEngine(threading.Thread):
 
                     final_pnl = pos.get('unrealized_pnl', 0.0)
                     
+                    # --- ACHIEVEMENT BADGES EVALUATION ---
+                    multiplier = 5.0 if pos.get('symbol', '') == 'MES' else 2.0
+                    pos_size = pos.get('size', 1)
+                    final_pnl_points = final_pnl / (multiplier * pos_size) if pos_size > 0 else 0
+                    time_open_sec = time.time() - pos.get('real_timestamp', time.time())
+                    
+                    earned_badges = []
+                    if final_pnl_points > 0 and pos.get('max_drawdown', 0) >= -1.0:
+                        earned_badges.append('The Sniper')
+                    if final_pnl_points > 3.0 and time_open_sec > 180:
+                        earned_badges.append('Diamond Hands')
+                    if final_pnl_points <= -6.0:
+                        earned_badges.append('Iron Shield')
+                        
+                    for badge in earned_badges:
+                        badge_entry = {'badge': badge, 'symbol': pos.get('symbol', ''), 'pnl': final_pnl, 'time': time.time()}
+                        with state.state_manager._lock:
+                            if not hasattr(state.state_manager, 'recent_badges'):
+                                state.state_manager.recent_badges = []
+                            state.state_manager.recent_badges.insert(0, badge_entry)
+                            state.state_manager.recent_badges = state.state_manager.recent_badges[:10]
+                        log_to_both(f"🏆 ACHIEVEMENT UNLOCKED: {badge}!")
+
+                    # --- DISCIPLINE XP EVALUATION ---
+                    env_at_entry = pos.get('entry_environment', 'UNKNOWN')
+                    xp_awarded = 0
+                    if env_at_entry == 'ZONE GREEN':
+                        xp_awarded = 50
+                    elif env_at_entry == 'ZONE YELLOW':
+                        xp_awarded = 10
+                    elif env_at_entry == 'ZONE RED':
+                        xp_awarded = -50
+                        
+                    if not hasattr(state.state_manager, 'daily_discipline_xp'):
+                        state.state_manager.daily_discipline_xp = 0
+                    state.state_manager.daily_discipline_xp += xp_awarded
+                    log_to_both(f"🎮 DISCIPLINE XP: {xp_awarded:+d} (Entry in {env_at_entry}) | Daily Total: {state.state_manager.daily_discipline_xp}")
+
                     sig_id = pos.get('signal_id')
                     if not sig_id:
                         sig_id = pos.get('signal_timestamp')
@@ -448,6 +505,7 @@ class MidasEngine(threading.Thread):
                         if sig_id_str in state.state_manager.active_trade_logs:
                             log_lines = state.state_manager.active_trade_logs.pop(sig_id_str)
                             log_lines.append(f"FINAL PNL: {final_pnl}")
+                            log_lines.append(f"DISCIPLINE XP AWARDED: {xp_awarded}")
                             
                             outcome = "WIN" if final_pnl > 0 else "LOSS"
                             os.makedirs(os.path.join("logs", "post_mortem"), exist_ok=True)
@@ -594,7 +652,10 @@ class MidasEngine(threading.Thread):
                                     'timestamp': state.state_manager.get_current_time().timestamp(),
                                     'real_timestamp': time.time(),
                                     'signal_timestamp': time.time(),
-                                    'signal_id': signal_id
+                                    'signal_id': signal_id,
+                                    'max_profit': 0.0,           # <--- CLEARS THE GHOST
+                                    'unrealized_pnl': 0.0,       # <--- CLEARS THE GHOST
+                                    'entry_environment': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN')
                                 }
                                 state.state_manager.add_position(position)
                                 
@@ -780,6 +841,10 @@ class MidasEngine(threading.Thread):
                             state.state_manager.set_market_data(symbol, market_depth)
 
                             chop_index = state.state_manager.current_chop_index
+                            
+                            # --- ENVIRONMENT GAUGE ---
+                            env_atr = logic.get_current_atr(state.state_manager.price_history.get(symbol, []))
+                            state.state_manager.market_environment_status = logic.get_market_environment_status(chop_index, env_atr)
 
                             # --- AI SUPERVISOR (RL AGENT) ---
                             ai_action = 0 # 0=Hold, 1=Buy, 2=Sell
@@ -1130,7 +1195,10 @@ class MidasEngine(threading.Thread):
                                                                 'timestamp': state.state_manager.get_current_time().timestamp(),
                                                                 'real_timestamp': time.time(),
                                                                 'signal_timestamp': float(signal.get('timestamp', state.state_manager.get_current_time().timestamp())),
-                                                                'signal_id': signal.get('id', '')
+                                                                'signal_id': signal.get('id', ''),
+                                                                'max_profit': 0.0,           # <--- CLEARS THE GHOST
+                                                                'unrealized_pnl': 0.0,       # <--- CLEARS THE GHOST
+                                                                'entry_environment': getattr(state.state_manager, 'market_environment_status', 'UNKNOWN')
                                                             }
                                                             
                                                             # Deduplication Logic
