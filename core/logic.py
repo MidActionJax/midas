@@ -811,7 +811,7 @@ def analyze_order_book(symbol, order_book, price_history_map, adapter=None, thre
 
             # --- AI SNIPER TRIGGER ---
             # Set optimized thresholds from Grid Search
-            target_threshold = 80.0 if active_brain == 'LONG' else 80.0
+            target_threshold = 72.0 if active_brain == 'LONG' else 80.0
             
             # If the AI is confident, it creates its own signal even if no iceberg exists!
             if ml_score_pct >= target_threshold:
